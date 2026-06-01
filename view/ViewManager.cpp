@@ -590,7 +590,7 @@ ViewManager::checkPlayStatus()
 
         emit playbackFrameChanged(m_playbackFrame);
 
-        QTimer::singleShot(500, this, SLOT(checkPlayStatus()));
+        QTimer::singleShot(20, this, SLOT(checkPlayStatus()));
 
     } else if (isPlaying()) {
 
