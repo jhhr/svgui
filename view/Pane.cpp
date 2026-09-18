@@ -1419,7 +1419,7 @@ modifierNames(Qt::KeyboardModifiers m)
     if (m & Qt::GroupSwitchModifier) s << "GroupSwitch";
     m &= (~ (Qt::ShiftModifier | Qt::ControlModifier | Qt::AltModifier |
              Qt::MetaModifier | Qt::KeypadModifier | Qt::GroupSwitchModifier));
-    if (m) s << QString(" (residue %1)").arg(m);
+    if (m) s << QString(" (residue %1)").arg(int(m));
     if (s.empty()) return "(none)";
     else return s.join(" | ");
 }
