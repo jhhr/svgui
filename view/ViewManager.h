@@ -96,6 +96,17 @@ public:
 
     sv_frame_t getPlaybackFrame() const; // the set method is a slot
 
+    /**
+     * Set the frame at which a recording is taken to start. While
+     * recording, the playback frame is this plus the duration
+     * recorded so far. The default is 0, a recording that starts at
+     * the start of the timeline; an application that records from
+     * somewhere else (the playback position, say) sets it before
+     * recording. It stays as set until set again.
+     */
+    void setRecordStartFrame(sv_frame_t frame) { m_recordStartFrame = frame; }
+    sv_frame_t getRecordStartFrame() const { return m_recordStartFrame; }
+
     // Only meaningful in solo mode, and used for optional alignment feature
     ModelId getPlaybackModel() const;
     void setPlaybackModel(ModelId);
@@ -350,6 +361,7 @@ protected:
     sv_frame_t m_globalCentreFrame;
     ZoomLevel m_globalZoom;
     mutable sv_frame_t m_playbackFrame;
+    sv_frame_t m_recordStartFrame;
     ModelId m_playbackModel;
     sv_samplerate_t m_mainModelSampleRate;
 

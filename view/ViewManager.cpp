@@ -38,6 +38,7 @@ ViewManager::ViewManager() :
     m_globalCentreFrame(0),
     m_globalZoom(ZoomLevel::FramesPerPixel, 1024),
     m_playbackFrame(0),
+    m_recordStartFrame(0),
     m_mainModelSampleRate(0),
     m_lastLeft(0), 
     m_lastRight(0),
@@ -170,7 +171,8 @@ sv_frame_t
 ViewManager::getPlaybackFrame() const
 {
     if (isRecording()) {
-        m_playbackFrame = m_recordTarget->getRecordDuration();
+        m_playbackFrame =
+            m_recordStartFrame + m_recordTarget->getRecordDuration();
 #ifdef DEBUG_VIEW_MANAGER
         SVCERR << "ViewManager::getPlaybackFrame(recording) -> " << m_playbackFrame << endl;
 #endif
@@ -582,7 +584,8 @@ ViewManager::checkPlayStatus()
             }
         }
 
-        m_playbackFrame = m_recordTarget->getRecordDuration();
+        m_playbackFrame =
+            m_recordStartFrame + m_recordTarget->getRecordDuration();
 
 #ifdef DEBUG_VIEW_MANAGER
         SVCERR << "ViewManager::checkPlayStatus: Recording, frame " << m_playbackFrame << ", levels " << m_lastLeft << "," << m_lastRight << endl;
