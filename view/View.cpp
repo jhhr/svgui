@@ -3287,6 +3287,7 @@ View::toXml(QTextStream &stream,
         .arg(extraAttributes);
 
     for (int i = 0; i < (int)m_fixedOrderLayers.size(); ++i) {
+        if (!m_fixedOrderLayers[i]->isSavedInSession()) continue;
         bool visible = !m_fixedOrderLayers[i]->isLayerDormant(this);
         m_fixedOrderLayers[i]->toBriefXml(stream, indent + "  ",
                                           QString("visible=\"%1\"")

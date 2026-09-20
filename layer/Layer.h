@@ -667,6 +667,17 @@ public:
      */
     virtual bool canExistWithoutModel() const { return false; }
 
+    /**
+     * Say whether this layer is to be written to a session file. True
+     * by default. An application sets it false for a layer it makes
+     * again by itself when a session is loaded: the layer is then left
+     * out of the session's layers and out of the views' lists of
+     * layers, and a model that only such layers show is left out too
+     * (see Document::toXml()).
+     */
+    void setSavedInSession(bool saved) { m_savedInSession = saved; }
+    bool isSavedInSession() const { return m_savedInSession; }
+
 public slots:
     /**
      * Change the visibility status (dormancy) of the layer in the
@@ -775,6 +786,7 @@ protected:
     QString m_presentationName;
 
 private:
+    bool m_savedInSession = true;
     mutable QMutex m_dormancyMutex;
     mutable std::map<const void *, bool> m_dormancy;
 };
