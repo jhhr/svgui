@@ -163,7 +163,7 @@ RegionLayer::getPropertyRangeAndValue(const PropertyName &name,
     } else if (name == "Plot Type") {
         
         if (min) *min = 0;
-        if (max) *max = 1;
+        if (max) *max = 2;
         if (deflt) *deflt = 0;
         
         val = int(m_plotStyle);
@@ -205,6 +205,7 @@ RegionLayer::getPropertyValueLabel(const PropertyName &name,
         default:
         case 0: return tr("Bars");
         case 1: return tr("Segmentation");
+        case 2: return tr("Strip");
         }
 
     } else if (name == "Vertical Scale") {
@@ -309,6 +310,9 @@ RegionLayer::getVerticalExtents() const
 {
     auto model = ModelById::getAs<RegionModel>(m_model);
     if (!model) return NO_VERTICAL_EXTENTS;
+
+    // A strip is not placed by value
+    if (m_plotStyle == PlotStrip) return NO_VERTICAL_EXTENTS;
     
     double min = model->getValueMinimum();
     double max = model->getValueMaximum();
@@ -410,6 +414,8 @@ QString
 RegionLayer::getFeatureDescription(LayerGeometryProvider *v, QPoint &pos) const
 {
     int x = pos.x();
+
+    if (m_plotStyle == PlotStrip) return "";
 
     auto model = ModelById::getAs<RegionModel>(m_model);
     if (!model || !model->getSampleRate()) return "";
@@ -808,6 +814,31 @@ RegionLayer::paint(LayerGeometryProvider *v, QPainter &paint, QRect rect) const
                                                   wholeFrame1 - wholeFrame0));
     if (points.empty()) return;
 
+    if (m_plotStyle == PlotStrip) {
+
+        // A band along the bottom: where a region is, the band is
+        // filled.  Nothing else of a region is shown
+        int bandHeight = v->scalePixelSize(6);
+        int bandTop = v->getPaintHeight() - bandHeight;
+
+        paint.save();
+        paint.setRenderHint(QPainter::Antialiasing, false);
+        paint.setPen(Qt::NoPen);
+        paint.setBrush(getBaseQColor());
+
+        for (const Event &p : points) {
+            int x = v->getXForFrame(p.getFrame());
+            int ex = v->getXForFrame(p.getFrame() + p.getDuration());
+            if (ex < x0 || x > x1) continue;
+            int w = ex - x;
+            if (w < 1) w = 1;
+            paint.drawRect(x, bandTop, w, bandHeight);
+        }
+
+        paint.restore();
+        return;
+    }
+
     paint.setPen(getBaseQColor());
 
     QColor brushColour(getBaseQColor());
@@ -1037,8 +1068,9 @@ int
 RegionLayer::getVerticalScaleWidth(LayerGeometryProvider *v, bool, QPainter &paint) const
 {
     auto model = ModelById::getAs<RegionModel>(m_model);
-    if (!model || 
-        m_verticalScale == AutoAlignScale || 
+    if (!model ||
+        m_plotStyle == PlotStrip ||
+        m_verticalScale == AutoAlignScale ||
         m_verticalScale == EqualSpaced) {
         return 0;
     } else if (m_plotStyle == PlotSegmentation) {

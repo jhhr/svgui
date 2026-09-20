@@ -105,7 +105,13 @@ public:
 
     enum PlotStyle {
         PlotLines,
-        PlotSegmentation
+        PlotSegmentation,
+
+        // Each region a filled bar in a band of fixed height along the
+        // bottom of the view, whatever its value: for showing where
+        // there is something and where there is not.  Display only: no
+        // vertical scale, no labels, no editing
+        PlotStrip
     };
 
     void setPlotStyle(PlotStyle style);
@@ -113,7 +119,7 @@ public:
 
     bool isLayerScrollable(const LayerGeometryProvider *v) const override;
 
-    bool isLayerEditable() const override { return true; }
+    bool isLayerEditable() const override { return m_plotStyle != PlotStrip; }
 
     int getCompletion(LayerGeometryProvider *) const override;
 
