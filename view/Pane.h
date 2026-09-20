@@ -66,6 +66,30 @@ public:
 
     int getVerticalScaleWidth() const;
 
+    /**
+     * Return the "work model": the model whose time extents are blocked
+     * off at the left and right of the pane, and whose title and
+     * alignment status the pane reports. It is the model of the topmost
+     * layer that has one, preferring a waveform layer's own model and
+     * otherwise taking a layer's source model if that is audio.
+     *
+     * A layer that is dormant in this pane is not considered: it is not
+     * part of what the pane is showing, and a host may well have one
+     * only to hold a model it is writing to.
+     */
+    ModelId getWorkModel() const;
+
+    /**
+     * Name the work model, in place of the one the pane would choose
+     * for itself. Pass a null model to go back to choosing.
+     *
+     * A pane holding more than one audio model -- one that is the work,
+     * and others overlaid on its timeline -- needs this: otherwise the
+     * pane blocks itself off at the end of whichever of them happens to
+     * be topmost, which for an overlay means nothing to the user.
+     */
+    void setWorkModel(ModelId modelId);
+
     virtual QImage *renderToNewImage() override {
         return View::renderToNewImage();
     }
@@ -142,6 +166,10 @@ protected:
     void wheelHorizontal(int sign, Qt::KeyboardModifiers);
     void wheelHorizontalFine(int pixels, Qt::KeyboardModifiers);
 
+    void scanLayersForOverlays(ModelId &waveformModelId,
+                               ModelId &workModelId,
+                               bool &haveSomeTimeXAxis) const;
+
     void drawVerticalScale(QRect r, Layer *, QPainter &);
     void drawFeatureDescription(Layer *, QPainter &);
     void drawCentreLine(sv_samplerate_t, QPainter &, bool omitLine);
@@ -207,6 +235,7 @@ protected:
     Selection m_editingSelection;
     int m_editingSelectionEdge;
     mutable int m_scaleWidth;
+    ModelId m_workModel;
 
     int m_pendingWheelAngle;
 

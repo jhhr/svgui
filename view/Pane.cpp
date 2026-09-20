@@ -396,37 +396,11 @@ Pane::paintEvent(QPaintEvent *e)
     ModelId waveformModelId; // just for reporting purposes
     ModelId workModelId;
 
-    for (LayerList::iterator vi = m_layerStack.end();
-         vi != m_layerStack.begin(); ) {
+    scanLayersForOverlays(waveformModelId, workModelId, haveSomeTimeXAxis);
 
-        --vi;
-
-        if (!haveSomeTimeXAxis && (*vi)->hasTimeXAxis()) {
-            haveSomeTimeXAxis = true;
-        }
-
-        ModelId modelId = (*vi)->getModel();
-        if (!modelId.isNone()) {
-            if (dynamic_cast<WaveformLayer *>(*vi)) {
-                waveformModelId = modelId;
-                workModelId = modelId;
-            } else {
-                if (ModelById::isa<WaveFileModel>(modelId)) {
-                    workModelId = modelId;
-                } else {
-                    ModelId sourceId = (*vi)->getSourceModel();
-                    if (ModelById::isa<WaveFileModel>(sourceId)) {
-                        workModelId = sourceId;
-                    }
-                }
-            }
-        }
-                
-        if (!waveformModelId.isNone() &&
-            !workModelId.isNone() &&
-            haveSomeTimeXAxis) {
-            break;
-        }
+    if (!m_workModel.isNone()) {
+        waveformModelId = m_workModel;
+        workModelId = m_workModel;
     }
 
     // Block off left and right extents so we can see where the main model ends
@@ -846,6 +820,71 @@ Pane::drawCentreLine(sv_samplerate_t sampleRate, QPainter &paint, bool omitLine)
         
         PaintAssistant::drawVisibleText(this, paint, x, y, text, PaintAssistant::OutlinedText);
     }
+}
+
+void
+Pane::scanLayersForOverlays(ModelId &waveformModelId,
+                            ModelId &workModelId,
+                            bool &haveSomeTimeXAxis) const
+{
+    for (LayerList::const_iterator vi = m_layerStack.end();
+         vi != m_layerStack.begin(); ) {
+
+        --vi;
+
+        if (!haveSomeTimeXAxis && (*vi)->hasTimeXAxis()) {
+            haveSomeTimeXAxis = true;
+        }
+
+        // A layer that is not shown here is no part of what the pane is
+        // showing: its model must not be the one whose extents block off
+        // the ends of the pane, or whose duration, title and alignment
+        // are reported. (A host may have such a layer only to hold a
+        // model it is writing to, as when recording.)
+        if ((*vi)->isLayerDormant(this)) continue;
+
+        ModelId modelId = (*vi)->getModel();
+        if (!modelId.isNone()) {
+            if (dynamic_cast<WaveformLayer *>(*vi)) {
+                waveformModelId = modelId;
+                workModelId = modelId;
+            } else {
+                if (ModelById::isa<WaveFileModel>(modelId)) {
+                    workModelId = modelId;
+                } else {
+                    ModelId sourceId = (*vi)->getSourceModel();
+                    if (ModelById::isa<WaveFileModel>(sourceId)) {
+                        workModelId = sourceId;
+                    }
+                }
+            }
+        }
+                
+        if (!waveformModelId.isNone() &&
+            !workModelId.isNone() &&
+            haveSomeTimeXAxis) {
+            break;
+        }
+    }
+}
+
+ModelId
+Pane::getWorkModel() const
+{
+    if (!m_workModel.isNone()) return m_workModel;
+
+    ModelId waveformModelId, workModelId;
+    bool haveSomeTimeXAxis = false;
+    scanLayersForOverlays(waveformModelId, workModelId, haveSomeTimeXAxis);
+    return workModelId;
+}
+
+void
+Pane::setWorkModel(ModelId modelId)
+{
+    if (m_workModel == modelId) return;
+    m_workModel = modelId;
+    update();
 }
 
 void
