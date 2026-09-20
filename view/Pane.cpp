@@ -1398,9 +1398,12 @@ Pane::registerShortcuts(KeyReference &kr)
 Layer *
 Pane::getTopFlexiNoteLayer()
 {
+    // A dormant layer is not on show, and a tool must not act on notes
+    // the user cannot see
     for (int i = int(m_layerStack.size()) - 1; i >= 0; --i) {
         if (LayerFactory::getInstance()->getLayerType(m_layerStack[i]) ==
-            LayerFactory::FlexiNotes) {
+            LayerFactory::FlexiNotes &&
+            !m_layerStack[i]->isLayerDormant(this)) {
             return m_layerStack[i];
         }
     }
