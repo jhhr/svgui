@@ -116,11 +116,17 @@ public:
         // vertical scale, no labels, no editing
         PlotStrip,
 
-        // Each region's label written along the top of the view at the
-        // region's start, over a thin bar as long as the region: for
-        // words and when they are sung.  A label that would run into
-        // the one before goes to a second row, and is left out when
-        // that row has no room either.  Display only, as PlotStrip
+        // Each region a box as long as the region along the bottom of
+        // the view, just above where PlotStrip draws, with its label
+        // centred in it: for words and when they are sung.  A label
+        // longer than its box widens the box around its middle, and
+        // one that would run into the one before goes to a second row,
+        // or is left out when that has no room either; a bar under the
+        // boxes shows every region's extent all the same.  The font
+        // grows as the view zooms in.  The region at the highlight
+        // frame, if one is set, is drawn in another colour, and in the
+        // lowest row over the others if it had no room.  Display only,
+        // as PlotStrip
         PlotLyrics
     };
 
@@ -135,13 +141,46 @@ public:
 
     /**
      * The rows of the labels of PlotLyrics.  Each label is given as
-     * its left edge and width, in order of left edge.  A label goes
-     * in the first of the given number of rows whose last label ends
-     * at least gap before it, or gets -1 if there is no such row.
+     * its left edge and width, in the order of the regions.  A label
+     * goes in the first of the given number of rows in which it
+     * starts at least gap after every label already there ends, or
+     * gets -1 if there is no such row.
      */
     static std::vector<int> assignLabelRows
     (const std::vector<std::pair<double, double>> &xAndWidth,
      int rows, double gap);
+
+    /**
+     * The left edge and width of the box of a region that runs from
+     * x0 to x1 and whose label is textWidth wide: the region itself,
+     * or the label's width centred on the region's middle if the
+     * label does not fit.
+     */
+    static std::pair<double, double> getLyricsBoxSpan
+    (double x0, double x1, double textWidth);
+
+    /**
+     * The pixel size of the font of PlotLyrics: twice the view's own
+     * at the least, larger as the view zooms in (more pixels per
+     * second), up to four times the view's, and never more than an
+     * eighth of the view's height, so that the rows leave room for
+     * the rest of it.
+     */
+    static int getLyricsFontPixelSize(double pixelsPerSecond,
+                                      int basePixelSize,
+                                      int paintHeight);
+
+    /**
+     * The region containing this frame is drawn highlighted, for
+     * PlotLyrics: the word being sung.  A negative frame highlights
+     * nothing.  The view is repainted only when that changes which
+     * region it is, not for every frame.
+     */
+    void setHighlightFrame(sv_frame_t frame);
+    sv_frame_t getHighlightFrame() const { return m_highlightFrame; }
+
+    /// The region that is highlighted now; false if none is
+    bool getHighlightedEvent(Event &) const;
 
     int getCompletion(LayerGeometryProvider *) const override;
 
@@ -189,6 +228,11 @@ protected:
     PlotStyle m_plotStyle;
     bool m_propertiesExplicitlySet;
 
+    // PlotLyrics: the frame asked for, and the region it falls in
+    sv_frame_t m_highlightFrame;
+    bool m_haveHighlight;
+    Event m_highlightEvent;
+
     typedef std::map<double, int> SpacingMap;
 
     // region value -> ordering
@@ -211,7 +255,7 @@ protected:
         sv_frame_t endFrame = 0;
         std::map<Event, int> rows;       // -1 for a label left out
         std::set<Event> lineStarts;      // drawn in bold
-        int maxWidth = 0;
+        int maxWidth = 0;                // of a box, in pixels
     };
     mutable LyricsLayout m_lyricsLayout;
 

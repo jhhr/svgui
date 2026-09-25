@@ -39,6 +39,7 @@
 #include <QPainterPath>
 #include <QMouseEvent>
 #include <QFontMetrics>
+#include <QFontInfo>
 
 #include <algorithm>
 #include <limits>
@@ -64,7 +65,10 @@ RegionLayer::RegionLayer() :
     m_colourMap(0),
     m_colourInverted(false),
     m_plotStyle(PlotLines),
-    m_propertiesExplicitlySet(false)
+    m_propertiesExplicitlySet(false),
+    m_highlightFrame(-1),
+    m_haveHighlight(false),
+    m_highlightEvent(0)
 {
     
 }
@@ -1083,7 +1087,8 @@ RegionLayer::assignLabelRows(const std::vector<std::pair<double, double>> &xAndW
     std::vector<int> result;
     result.reserve(xAndWidth.size());
 
-    // Where the last label in each row ends; nothing yet
+    // Where the labels in each row end, the furthest of them: a label
+    // centred on a short region can reach back past the one before it
     std::vector<double> rowEnds
         (std::max(rows, 0), -std::numeric_limits<double>::infinity());
 
@@ -1096,7 +1101,8 @@ RegionLayer::assignLabelRows(const std::vector<std::pair<double, double>> &xAndW
             }
         }
         if (chosen >= 0) {
-            rowEnds[chosen] = label.first + label.second;
+            rowEnds[chosen] = std::max(rowEnds[chosen],
+                                       label.first + label.second);
         }
         result.push_back(chosen);
     }
@@ -1104,35 +1110,113 @@ RegionLayer::assignLabelRows(const std::vector<std::pair<double, double>> &xAndW
     return result;
 }
 
+std::pair<double, double>
+RegionLayer::getLyricsBoxSpan(double x0, double x1, double textWidth)
+{
+    double width = x1 - x0;
+    if (textWidth <= width) return { x0, width };
+    double middle = (x0 + x1) / 2.0;
+    return { middle - textWidth / 2.0, textWidth };
+}
+
+int
+RegionLayer::getLyricsFontPixelSize(double pixelsPerSecond,
+                                    int basePixelSize,
+                                    int paintHeight)
+{
+    // Twice the view's font, the smallest that could be read while
+    // singing, up to four times; in between it follows the zoom, so
+    // that a view zoomed in far enough for the words to fit their
+    // boxes has them in the size those boxes can take
+    const double pixelsPerSecondPerPixel = 10.0;
+
+    int base = std::max(basePixelSize, 1);
+    int lo = 2 * base;
+    int hi = 4 * base;
+
+    // Two rows of it and the bar take less than a third of the view
+    int byHeight = paintHeight / 8;
+    if (byHeight < hi) hi = std::max(base, byHeight);
+    if (lo > hi) lo = hi;
+
+    int size = int(std::lround(pixelsPerSecond / pixelsPerSecondPerPixel));
+    return std::min(std::max(size, lo), hi);
+}
+
+void
+RegionLayer::setHighlightFrame(sv_frame_t frame)
+{
+    m_highlightFrame = frame;
+
+    bool have = false;
+    Event found(0);
+
+    auto model = ModelById::getAs<RegionModel>(m_model);
+    if (model && frame >= 0) {
+        // The latest to start, if regions overlap: the word being sung
+        for (const Event &e : model->getEventsCovering(frame)) {
+            if (!have || found.getFrame() < e.getFrame()) {
+                found = e;
+                have = true;
+            }
+        }
+    }
+
+    if (have == m_haveHighlight && (!have || found == m_highlightEvent)) {
+        return;
+    }
+
+    m_haveHighlight = have;
+    m_highlightEvent = found;
+
+    // Drawn into the view's cache with the rest of the layer, so the
+    // view has to paint it again; only when the word changes, which is
+    // a few times a second at most
+    if (m_plotStyle == PlotLyrics) emit layerParametersChanged();
+}
+
+bool
+RegionLayer::getHighlightedEvent(Event &e) const
+{
+    if (!m_haveHighlight) return false;
+    e = m_highlightEvent;
+    return true;
+}
+
 void
 RegionLayer::paintLyrics(LayerGeometryProvider *v, QPainter &paint, QRect rect) const
 {
     auto model = ModelById::getAs<RegionModel>(m_model);
-    if (!model) return;
+    if (!model || !model->getSampleRate()) return;
 
-    // Two rows of labels along the top of the view, and under them a
-    // bar for each region, from where its word starts to where it ends
+    // Up to two rows of boxes along the bottom of the view, clear of
+    // where PlotStrip draws, and under them a bar for each region
     static const int rowCount = 2;
 
+    ZoomLevel zoom = v->getZoomLevel();
+    double pixelsPerFrame = (zoom.zone == ZoomLevel::FramesPerPixel ?
+                             1.0 / zoom.level : double(zoom.level));
+
     QFont plainFont = paint.font();
+    plainFont.setPixelSize(getLyricsFontPixelSize
+                           (pixelsPerFrame * model->getSampleRate(),
+                            QFontInfo(paint.font()).pixelSize(),
+                            v->getPaintHeight()));
     QFont boldFont = plainFont;
     boldFont.setBold(true);
     QFontMetrics plainMetrics(plainFont);
     QFontMetrics boldMetrics(boldFont);
 
-    int padding = v->scalePixelSize(2);
-    int rowHeight = plainMetrics.height() + padding;
-    int top = padding;
-    int barTop = top + rowCount * rowHeight + padding;
+    int textPadding = std::max(plainFont.pixelSize() / 4, 2);
+    int gap = v->scalePixelSize(3);
+    int rowHeight = plainMetrics.height() + v->scalePixelSize(4);
     int barHeight = v->scalePixelSize(3);
-    int gap = v->scalePixelSize(4);
+    int barTop = v->getPaintHeight() - v->scalePixelSize(8) - barHeight;
 
-    auto labelWidth = [&](const Event &e, bool lineStart) {
+    auto textWidth = [&](const Event &e, bool lineStart) {
         const QFontMetrics &metrics = lineStart ? boldMetrics : plainMetrics;
-        return metrics.horizontalAdvance(e.getLabel()) + 2 * padding;
+        return metrics.horizontalAdvance(e.getLabel()) + 2 * textPadding;
     };
-
-    ZoomLevel zoom = v->getZoomLevel();
 
     LyricsLayout &layout = m_lyricsLayout;
     if (!layout.valid ||
@@ -1144,9 +1228,6 @@ RegionLayer::paintLyrics(LayerGeometryProvider *v, QPainter &paint, QRect rect) 
 
         // Laid out on the whole timeline, not the view, so that the
         // answer is the same wherever the view is scrolled to
-        double pixelsPerFrame = (zoom.zone == ZoomLevel::FramesPerPixel ?
-                                 1.0 / zoom.level : double(zoom.level));
-
         EventVector all = model->getAllEvents();
         std::vector<std::pair<double, double>> spans;
         spans.reserve(all.size());
@@ -1166,10 +1247,13 @@ RegionLayer::paintLyrics(LayerGeometryProvider *v, QPainter &paint, QRect rect) 
             first = false;
             previousValue = e.getValue();
             if (lineStart) layout.lineStarts.insert(e);
-            int width = labelWidth(e, lineStart);
-            layout.maxWidth = std::max(layout.maxWidth, width);
-            spans.push_back({ double(e.getFrame()) * pixelsPerFrame,
-                              double(width) });
+            auto span = getLyricsBoxSpan
+                (double(e.getFrame()) * pixelsPerFrame,
+                 double(e.getFrame() + e.getDuration()) * pixelsPerFrame,
+                 textWidth(e, lineStart));
+            layout.maxWidth = std::max(layout.maxWidth,
+                                       int(std::ceil(span.second)));
+            spans.push_back(span);
         }
 
         std::vector<int> rows = assignLabelRows(spans, rowCount, gap);
@@ -1180,53 +1264,82 @@ RegionLayer::paintLyrics(LayerGeometryProvider *v, QPainter &paint, QRect rect) 
         layout.valid = true;
     }
 
-    // A label that starts to the left of what is being painted can
-    // still reach into it
+    // A box that starts to the left of what is being painted, or one
+    // centred on a region to the right of it, can still reach into it
     sv_frame_t frame0 = v->getFrameForX(rect.left() - layout.maxWidth);
-    sv_frame_t frame1 = v->getFrameForX(rect.right() + 1);
+    sv_frame_t frame1 = v->getFrameForX(rect.right() + layout.maxWidth + 1);
     if (frame0 < 0) frame0 = 0;
     if (frame1 <= frame0) return;
 
     EventVector points(model->getEventsSpanning(frame0, frame1 - frame0));
     if (points.empty()) return;
 
-    QColor foreground = v->getForeground();
-    QColor background = v->getBackground();
-    background.setAlpha(180);
+    // Dark text on light boxes whatever the view's colours, so that
+    // the words can be read over anything; the word being sung in amber
+    const QColor boxFill(235, 240, 250, 235);
+    const QColor boxEdge(170, 180, 200);
+    const QColor highlightFill(255, 212, 125, 245);
+    const QColor highlightEdge(215, 145, 40);
+    const QColor textColour(20, 20, 20);
 
     paint.save();
     paint.setRenderHint(QPainter::Antialiasing, false);
 
     for (const Event &e : points) {
+        bool highlighted = (m_haveHighlight && e == m_highlightEvent);
         int x = v->getXForFrame(e.getFrame());
         int ex = v->getXForFrame(e.getFrame() + e.getDuration());
 
         // A pixel's gap before each bar, so that one word's bar can be
         // told from the next one's
+        QColor bar = highlighted ? highlightEdge : getBaseQColor();
         if (ex > x + 1) {
-            paint.fillRect(x + 1, barTop, ex - x - 1, barHeight,
-                           getBaseQColor());
+            paint.fillRect(x + 1, barTop, ex - x - 1, barHeight, bar);
         } else {
-            paint.fillRect(x, barTop, 1, barHeight, getBaseQColor());
+            paint.fillRect(x, barTop, 1, barHeight, bar);
         }
     }
 
+    paint.setRenderHint(QPainter::Antialiasing, true);
     paint.setRenderHint(QPainter::TextAntialiasing, true);
 
-    for (const Event &e : points) {
-        auto row = layout.rows.find(e);
-        if (row == layout.rows.end() || row->second < 0) continue;
-
+    auto drawBox = [&](const Event &e, int row, bool highlighted) {
         bool lineStart = (layout.lineStarts.find(e) != layout.lineStarts.end());
         int x = v->getXForFrame(e.getFrame());
-        int y = top + row->second * rowHeight;
-        QRect box(x, y, labelWidth(e, lineStart), rowHeight);
+        int ex = v->getXForFrame(e.getFrame() + e.getDuration());
+        auto span = getLyricsBoxSpan(x, ex, textWidth(e, lineStart));
 
-        paint.fillRect(box, background);
+        // Row 0 is the lowest, just above the bars
+        int y = barTop - gap - (row + 1) * rowHeight - row * gap;
+        QRectF box(span.first + 0.5, y + 0.5,
+                   std::max(span.second - 1.0, 1.0), rowHeight - 1.0);
+
+        paint.setPen(highlighted ? highlightEdge : boxEdge);
+        paint.setBrush(highlighted ? highlightFill : boxFill);
+        paint.drawRoundedRect(box, 3, 3);
+
         paint.setFont(lineStart ? boldFont : plainFont);
-        paint.setPen(foreground);
-        paint.drawText(box.adjusted(padding, 0, 0, 0),
-                       Qt::AlignLeft | Qt::AlignVCenter, e.getLabel());
+        paint.setPen(textColour);
+        paint.drawText(box, Qt::AlignCenter, e.getLabel());
+    };
+
+    bool highlightLeftOut = false;
+
+    for (const Event &e : points) {
+        bool highlighted = (m_haveHighlight && e == m_highlightEvent);
+        auto row = layout.rows.find(e);
+        if (row == layout.rows.end() || row->second < 0) {
+            if (highlighted) highlightLeftOut = true;
+            continue;
+        }
+        drawBox(e, row->second, highlighted);
+    }
+
+    // The word being sung is the one the singer has to be able to
+    // read: if it has no room of its own, it goes in the lowest row
+    // over whatever is there, for as long as it is being sung
+    if (highlightLeftOut) {
+        drawBox(m_highlightEvent, 0, true);
     }
 
     paint.restore();
