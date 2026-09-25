@@ -38,6 +38,10 @@
 #include <QPainter>
 #include <QPainterPath>
 #include <QMouseEvent>
+#include <QFontMetrics>
+
+#include <algorithm>
+#include <limits>
 #include <QTextStream>
 #include <QMessageBox>
 
@@ -163,7 +167,7 @@ RegionLayer::getPropertyRangeAndValue(const PropertyName &name,
     } else if (name == "Plot Type") {
         
         if (min) *min = 0;
-        if (max) *max = 2;
+        if (max) *max = 3;
         if (deflt) *deflt = 0;
         
         val = int(m_plotStyle);
@@ -206,6 +210,7 @@ RegionLayer::getPropertyValueLabel(const PropertyName &name,
         case 0: return tr("Bars");
         case 1: return tr("Segmentation");
         case 2: return tr("Strip");
+        case 3: return tr("Lyrics");
         }
 
     } else if (name == "Vertical Scale") {
@@ -311,8 +316,10 @@ RegionLayer::getVerticalExtents() const
     auto model = ModelById::getAs<RegionModel>(m_model);
     if (!model) return NO_VERTICAL_EXTENTS;
 
-    // A strip is not placed by value
-    if (m_plotStyle == PlotStrip) return NO_VERTICAL_EXTENTS;
+    // A strip is not placed by value, and neither are lyrics
+    if (m_plotStyle == PlotStrip || m_plotStyle == PlotLyrics) {
+        return NO_VERTICAL_EXTENTS;
+    }
     
     double min = model->getValueMinimum();
     double max = model->getValueMaximum();
@@ -415,7 +422,7 @@ RegionLayer::getFeatureDescription(LayerGeometryProvider *v, QPoint &pos) const
 {
     int x = pos.x();
 
-    if (m_plotStyle == PlotStrip) return "";
+    if (m_plotStyle == PlotStrip || m_plotStyle == PlotLyrics) return "";
 
     auto model = ModelById::getAs<RegionModel>(m_model);
     if (!model || !model->getSampleRate()) return "";
@@ -801,6 +808,11 @@ RegionLayer::paint(LayerGeometryProvider *v, QPainter &paint, QRect rect) const
 
 //    Profiler profiler("RegionLayer::paint", true);
 
+    if (m_plotStyle == PlotLyrics) {
+        paintLyrics(v, paint, rect);
+        return;
+    }
+
     // Allow margin so as to improve our odds of repainting the heads
     // or tails of labels
     int margin = 100;
@@ -1064,12 +1076,169 @@ RegionLayer::paint(LayerGeometryProvider *v, QPainter &paint, QRect rect) const
     paint.restore();
 }
 
+std::vector<int>
+RegionLayer::assignLabelRows(const std::vector<std::pair<double, double>> &xAndWidth,
+                             int rows, double gap)
+{
+    std::vector<int> result;
+    result.reserve(xAndWidth.size());
+
+    // Where the last label in each row ends; nothing yet
+    std::vector<double> rowEnds
+        (std::max(rows, 0), -std::numeric_limits<double>::infinity());
+
+    for (const auto &label : xAndWidth) {
+        int chosen = -1;
+        for (int r = 0; r < int(rowEnds.size()); ++r) {
+            if (rowEnds[r] + gap <= label.first) {
+                chosen = r;
+                break;
+            }
+        }
+        if (chosen >= 0) {
+            rowEnds[chosen] = label.first + label.second;
+        }
+        result.push_back(chosen);
+    }
+
+    return result;
+}
+
+void
+RegionLayer::paintLyrics(LayerGeometryProvider *v, QPainter &paint, QRect rect) const
+{
+    auto model = ModelById::getAs<RegionModel>(m_model);
+    if (!model) return;
+
+    // Two rows of labels along the top of the view, and under them a
+    // bar for each region, from where its word starts to where it ends
+    static const int rowCount = 2;
+
+    QFont plainFont = paint.font();
+    QFont boldFont = plainFont;
+    boldFont.setBold(true);
+    QFontMetrics plainMetrics(plainFont);
+    QFontMetrics boldMetrics(boldFont);
+
+    int padding = v->scalePixelSize(2);
+    int rowHeight = plainMetrics.height() + padding;
+    int top = padding;
+    int barTop = top + rowCount * rowHeight + padding;
+    int barHeight = v->scalePixelSize(3);
+    int gap = v->scalePixelSize(4);
+
+    auto labelWidth = [&](const Event &e, bool lineStart) {
+        const QFontMetrics &metrics = lineStart ? boldMetrics : plainMetrics;
+        return metrics.horizontalAdvance(e.getLabel()) + 2 * padding;
+    };
+
+    ZoomLevel zoom = v->getZoomLevel();
+
+    LyricsLayout &layout = m_lyricsLayout;
+    if (!layout.valid ||
+        !(layout.zoom == zoom) ||
+        layout.font != plainFont.toString() ||
+        layout.eventCount != model->getEventCount() ||
+        layout.startFrame != model->getStartFrame() ||
+        layout.endFrame != model->getEndFrame()) {
+
+        // Laid out on the whole timeline, not the view, so that the
+        // answer is the same wherever the view is scrolled to
+        double pixelsPerFrame = (zoom.zone == ZoomLevel::FramesPerPixel ?
+                                 1.0 / zoom.level : double(zoom.level));
+
+        EventVector all = model->getAllEvents();
+        std::vector<std::pair<double, double>> spans;
+        spans.reserve(all.size());
+
+        layout = LyricsLayout();
+        layout.zoom = zoom;
+        layout.font = plainFont.toString();
+        layout.eventCount = model->getEventCount();
+        layout.startFrame = model->getStartFrame();
+        layout.endFrame = model->getEndFrame();
+
+        // The first word of a line, where the value (the line) changes
+        bool first = true;
+        double previousValue = 0.0;
+        for (const Event &e : all) {
+            bool lineStart = (first || e.getValue() != previousValue);
+            first = false;
+            previousValue = e.getValue();
+            if (lineStart) layout.lineStarts.insert(e);
+            int width = labelWidth(e, lineStart);
+            layout.maxWidth = std::max(layout.maxWidth, width);
+            spans.push_back({ double(e.getFrame()) * pixelsPerFrame,
+                              double(width) });
+        }
+
+        std::vector<int> rows = assignLabelRows(spans, rowCount, gap);
+        for (int i = 0; i < int(all.size()); ++i) {
+            layout.rows[all[i]] = rows[i];
+        }
+
+        layout.valid = true;
+    }
+
+    // A label that starts to the left of what is being painted can
+    // still reach into it
+    sv_frame_t frame0 = v->getFrameForX(rect.left() - layout.maxWidth);
+    sv_frame_t frame1 = v->getFrameForX(rect.right() + 1);
+    if (frame0 < 0) frame0 = 0;
+    if (frame1 <= frame0) return;
+
+    EventVector points(model->getEventsSpanning(frame0, frame1 - frame0));
+    if (points.empty()) return;
+
+    QColor foreground = v->getForeground();
+    QColor background = v->getBackground();
+    background.setAlpha(180);
+
+    paint.save();
+    paint.setRenderHint(QPainter::Antialiasing, false);
+
+    for (const Event &e : points) {
+        int x = v->getXForFrame(e.getFrame());
+        int ex = v->getXForFrame(e.getFrame() + e.getDuration());
+
+        // A pixel's gap before each bar, so that one word's bar can be
+        // told from the next one's
+        if (ex > x + 1) {
+            paint.fillRect(x + 1, barTop, ex - x - 1, barHeight,
+                           getBaseQColor());
+        } else {
+            paint.fillRect(x, barTop, 1, barHeight, getBaseQColor());
+        }
+    }
+
+    paint.setRenderHint(QPainter::TextAntialiasing, true);
+
+    for (const Event &e : points) {
+        auto row = layout.rows.find(e);
+        if (row == layout.rows.end() || row->second < 0) continue;
+
+        bool lineStart = (layout.lineStarts.find(e) != layout.lineStarts.end());
+        int x = v->getXForFrame(e.getFrame());
+        int y = top + row->second * rowHeight;
+        QRect box(x, y, labelWidth(e, lineStart), rowHeight);
+
+        paint.fillRect(box, background);
+        paint.setFont(lineStart ? boldFont : plainFont);
+        paint.setPen(foreground);
+        paint.drawText(box.adjusted(padding, 0, 0, 0),
+                       Qt::AlignLeft | Qt::AlignVCenter, e.getLabel());
+    }
+
+    paint.restore();
+}
+
 int
 RegionLayer::getVerticalScaleWidth(LayerGeometryProvider *v, bool, QPainter &paint) const
 {
     auto model = ModelById::getAs<RegionModel>(m_model);
     if (!model ||
         m_plotStyle == PlotStrip ||
+        m_plotStyle == PlotLyrics ||
         m_verticalScale == AutoAlignScale ||
         m_verticalScale == EqualSpaced) {
         return 0;

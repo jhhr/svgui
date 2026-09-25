@@ -20,11 +20,14 @@
 #include "ColourScaleLayer.h"
 
 #include "data/model/RegionModel.h"
+#include "base/ZoomLevel.h"
 
 #include <QObject>
 #include <QColor>
 
 #include <map>
+#include <set>
+#include <vector>
 
 class QPainter;
 
@@ -111,7 +114,14 @@ public:
         // bottom of the view, whatever its value: for showing where
         // there is something and where there is not.  Display only: no
         // vertical scale, no labels, no editing
-        PlotStrip
+        PlotStrip,
+
+        // Each region's label written along the top of the view at the
+        // region's start, over a thin bar as long as the region: for
+        // words and when they are sung.  A label that would run into
+        // the one before goes to a second row, and is left out when
+        // that row has no room either.  Display only, as PlotStrip
+        PlotLyrics
     };
 
     void setPlotStyle(PlotStyle style);
@@ -119,7 +129,19 @@ public:
 
     bool isLayerScrollable(const LayerGeometryProvider *v) const override;
 
-    bool isLayerEditable() const override { return m_plotStyle != PlotStrip; }
+    bool isLayerEditable() const override {
+        return m_plotStyle != PlotStrip && m_plotStyle != PlotLyrics;
+    }
+
+    /**
+     * The rows of the labels of PlotLyrics.  Each label is given as
+     * its left edge and width, in order of left edge.  A label goes
+     * in the first of the given number of rows whose last label ends
+     * at least gap before it, or gets -1 if there is no such row.
+     */
+    static std::vector<int> assignLabelRows
+    (const std::vector<std::pair<double, double>> &xAndWidth,
+     int rows, double gap);
 
     int getCompletion(LayerGeometryProvider *) const override;
 
@@ -150,6 +172,8 @@ protected:
 
     bool getPointToDrag(LayerGeometryProvider *v, int x, int y, Event &) const;
 
+    void paintLyrics(LayerGeometryProvider *v, QPainter &paint, QRect rect) const;
+
     ModelId m_model;
     bool m_editing;
     int m_dragPointX;
@@ -172,6 +196,24 @@ protected:
 
     // region value -> number of regions with this value
     SpacingMap m_distributionMap;
+
+    // Where the labels of PlotLyrics go depends on the labels before
+    // them, so they are laid out for the whole model at once, for one
+    // zoom level and font, not in each paint: a view that scrolls
+    // repaints only the part that comes into sight, and that has to
+    // agree with what is on show already
+    struct LyricsLayout {
+        bool valid = false;
+        ZoomLevel zoom;
+        QString font;
+        int eventCount = 0;
+        sv_frame_t startFrame = 0;
+        sv_frame_t endFrame = 0;
+        std::map<Event, int> rows;       // -1 for a label left out
+        std::set<Event> lineStarts;      // drawn in bold
+        int maxWidth = 0;
+    };
+    mutable LyricsLayout m_lyricsLayout;
 
     int spacingIndexToY(LayerGeometryProvider *v, int i) const;
     double yToSpacingIndex(LayerGeometryProvider *v, int y) const;
