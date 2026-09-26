@@ -53,6 +53,14 @@ namespace sv {
 
 #define NOTE_HEIGHT 16
 
+// The height of a note, drawn and picked for editing alike: logical
+// pixels at the plot scale, so that at any pixel ratio the note keeps
+// its size and the area that picks it is the one drawn
+static int noteHeight(const LayerGeometryProvider *v)
+{
+    return v->scalePlotPixelSize(NOTE_HEIGHT);
+}
+
 FlexiNoteLayer::FlexiNoteLayer() :
     SingleColourLayer(),
     m_editing(false),
@@ -548,21 +556,22 @@ FlexiNoteLayer::getFeatureDescription(LayerGeometryProvider *v, QPoint &pos) con
     EventVector::iterator i;
 
     CoordinateScale scale = v->getEffectiveVerticalExtentsForLayer(this);
-    
+    int minHeight = noteHeight(v);
+
     for (i = points.begin(); i != points.end(); ++i) {
 
         int y = scale.getCoordForValueRounded(v, i->getValue());
-        int h = NOTE_HEIGHT; // GF: larger notes
+        int h = minHeight; // GF: larger notes
 
         if (model->getValueQuantization() != 0.0) {
             h = y -
                 scale.getCoordForValueRounded
                 (v, i->getValue() + model->getValueQuantization());
-            if (h < NOTE_HEIGHT) h = NOTE_HEIGHT;
+            if (h < minHeight) h = minHeight;
         }
 
         // GF: this is not quite correct
-        if (pos.y() >= y - 4 && pos.y() <= y + h) {
+        if (pos.y() >= y - v->scalePlotPixelSize(4) && pos.y() <= y + h) {
             note = *i;
             break;
         }
@@ -747,8 +756,15 @@ FlexiNoteLayer::paint(LayerGeometryProvider *v, QPainter &paint, QRect rect) con
     paint.setRenderHint(QPainter::Antialiasing, false);
 
     int noteNumber = -1;
-    
+
     CoordinateScale scale = v->getEffectiveVerticalExtentsForLayer(this);
+
+    // The outline a logical pixel wide at the plot scale, as the note
+    // is high (at ratio 1 and plot scale 1, the default pen's width)
+    int minHeight = noteHeight(v);
+    double lineWidth = v->scalePlotSize(1.0);
+    QPen basePen(getBaseQColor(), lineWidth);
+    QPen foregroundPen(v->getForeground(), lineWidth);
 
     for (EventVector::const_iterator i = points.begin();
          i != points.end(); ++i) {
@@ -764,24 +780,24 @@ FlexiNoteLayer::paint(LayerGeometryProvider *v, QPainter &paint, QRect rect) con
         int x = v->getXForFrame(p.getFrame());
         int y = scale.getCoordForValueRounded(v, p.getValue());
         int w = v->getXForFrame(p.getFrame() + p.getDuration()) - x;
-        int h = NOTE_HEIGHT; //GF: larger notes
-    
+        int h = minHeight; //GF: larger notes
+
         if (model->getValueQuantization() != 0.0) {
             h = y - scale.getCoordForValueRounded
                 (v, p.getValue() + model->getValueQuantization());
-            if (h < NOTE_HEIGHT) h = NOTE_HEIGHT; //GF: larger notes
+            if (h < minHeight) h = minHeight; //GF: larger notes
         }
 
         if (w < 1) w = 1;
-        paint.setPen(getBaseQColor());
+        paint.setPen(basePen);
         paint.setBrush(brushColour);
 
         if (shouldIlluminate && illuminatePoint == p) {
 
             paint.drawLine(x, -1, x, v->getPaintHeight() + 1);
             paint.drawLine(x+w, -1, x+w, v->getPaintHeight() + 1);
-        
-            paint.setPen(v->getForeground());
+
+            paint.setPen(foregroundPen);
         
             QString vlabel = tr("freq: %1%2")
                 .arg(p.getValue()).arg(model->getScaleUnits());
@@ -1526,15 +1542,16 @@ FlexiNoteLayer::getRelativeMousePosition(LayerGeometryProvider *v, Event &note, 
     int noteStartX = v->getXForFrame(note.getFrame());
     int noteEndX = v->getXForFrame(note.getFrame() + note.getDuration());
     int noteValueY = scale.getCoordForValueRounded(v,note.getValue());
-    int noteStartY = noteValueY - (NOTE_HEIGHT / 2);
-    int noteEndY = noteValueY + (NOTE_HEIGHT / 2);
-    
+    int height = noteHeight(v);
+    int noteStartY = noteValueY - (height / 2);
+    int noteEndY = noteValueY + (height / 2);
+
     bool closeToNote = false;
-    
+
     if (y >= noteStartY-ctol && y <= noteEndY+ctol && x >= noteStartX-ctol && x <= noteEndX+ctol) closeToNote = true;
     if (!closeToNote) return;
-    
-    int tol = NOTE_HEIGHT / 2;
+
+    int tol = height / 2;
     
     if (x >= noteStartX - tol && x <= noteStartX + tol) closeToLeft = true;
     if (x >= noteEndX - tol && x <= noteEndX + tol) closeToRight = true;

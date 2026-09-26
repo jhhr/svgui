@@ -206,6 +206,29 @@ public:
     virtual QPen scalePen(QPen pen) const = 0;
 
     /**
+     * Scale a size in logical pixels of an element of a plot (the
+     * height of a point or a note, the width of its outline) to the
+     * pixels painted in: by the pixel ratio this provider paints at
+     * (see getScaleFactor()) and by the view manager's plot scale
+     * (ViewManager::setPlotScale()). So a point or a note keeps its
+     * size in logical pixels on a hi-dpi display, and the same size
+     * serves for hit-testing in the view's own coordinates. Unlike
+     * scaleSize(), it does not follow the font size: at ratio 1 and
+     * plot scale 1 it returns the size unchanged.
+     */
+    virtual double scalePlotSize(double size) const = 0;
+
+    /**
+     * scalePlotSize() rounded to whole pixels, never 0 for a size
+     * that is not.
+     */
+    int scalePlotPixelSize(int size) const {
+        int scaled = int(scalePlotSize(size) + 0.5);
+        if (size != 0 && scaled == 0) scaled = 1;
+        return scaled;
+    }
+
+    /**
      * Retrieve the pixel scale factor for this object. Mostly we
      * don't want to use this - call the geometry accessors instead
      * which will do the right calculations. This is sometimes useful

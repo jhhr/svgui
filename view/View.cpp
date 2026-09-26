@@ -1073,6 +1073,8 @@ View::setViewManager(ViewManager *manager)
             this, SLOT(overlayModeChanged()));
     connect(m_manager, SIGNAL(showCentreLineChanged()),
             this, SLOT(overlayModeChanged()));
+    connect(m_manager, SIGNAL(plotScaleChanged()),
+            this, SLOT(overlayModeChanged()));
     connect(m_manager, SIGNAL(zoomWheelsEnabledChanged()),
             this, SLOT(zoomWheelsEnabledChanged()));
 
@@ -1898,6 +1900,13 @@ View::scalePenWidth(double width) const
     }
     double ratio = scaleSize(1.0);
     return width * sqrt(ratio);
+}
+
+double
+View::scalePlotSize(double size) const
+{
+    if (!m_manager) return size;
+    return size * m_manager->getPlotScale();
 }
 
 QPen

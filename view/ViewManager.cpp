@@ -28,6 +28,8 @@
 #include <QApplication>
 #include <QStyleFactory>
 
+#include <cmath>
+
 //#define DEBUG_VIEW_MANAGER 1
 
 namespace sv {
@@ -39,6 +41,7 @@ ViewManager::ViewManager() :
     m_globalZoom(ZoomLevel::FramesPerPixel, 1024),
     m_playbackFrame(0),
     m_recordStartFrame(0),
+    m_recordFrameRatio(1.0),
     m_mainModelSampleRate(0),
     m_lastLeft(0), 
     m_lastRight(0),
@@ -52,6 +55,7 @@ ViewManager::ViewManager() :
     m_zoomWheelsEnabled(true),
     m_opportunisticEditingEnabled(true),
     m_showCentreLine(true),
+    m_plotScale(1.0),
     m_illuminateLocalFeatures(true),
     m_showWorkTitle(false),
     m_showDuration(true),
@@ -171,8 +175,7 @@ sv_frame_t
 ViewManager::getPlaybackFrame() const
 {
     if (isRecording()) {
-        m_playbackFrame =
-            m_recordStartFrame + m_recordTarget->getRecordDuration();
+        m_playbackFrame = getRecordingFrame();
 #ifdef DEBUG_VIEW_MANAGER
         SVCERR << "ViewManager::getPlaybackFrame(recording) -> " << m_playbackFrame << endl;
 #endif
@@ -187,6 +190,17 @@ ViewManager::getPlaybackFrame() const
 #endif
     }
     return m_playbackFrame;
+}
+
+sv_frame_t
+ViewManager::getRecordingFrame() const
+{
+    sv_frame_t recorded = m_recordTarget->getRecordDuration();
+    if (m_recordFrameRatio != 1.0) {
+        recorded = sv_frame_t(std::llround(double(recorded) *
+                                           m_recordFrameRatio));
+    }
+    return m_recordStartFrame + recorded;
 }
 
 void
@@ -584,8 +598,7 @@ ViewManager::checkPlayStatus()
             }
         }
 
-        m_playbackFrame =
-            m_recordStartFrame + m_recordTarget->getRecordDuration();
+        m_playbackFrame = getRecordingFrame();
 
 #ifdef DEBUG_VIEW_MANAGER
         SVCERR << "ViewManager::checkPlayStatus: Recording, frame " << m_playbackFrame << ", levels " << m_lastLeft << "," << m_lastRight << endl;
@@ -792,6 +805,16 @@ ViewManager::setShowCentreLine(bool show)
     settings.beginGroup("MainWindow");
     settings.setValue("show-centre-line", int(m_showCentreLine));
     settings.endGroup();
+}
+
+void
+ViewManager::setPlotScale(double scale)
+{
+    if (!(scale > 0.0)) return;
+    if (m_plotScale != scale) {
+        m_plotScale = scale;
+        emit plotScaleChanged();
+    }
 }
 
 void
