@@ -20,11 +20,14 @@
 #include "ColourScaleLayer.h"
 
 #include "data/model/RegionModel.h"
+#include "base/ZoomLevel.h"
 
 #include <QObject>
 #include <QColor>
 
 #include <map>
+#include <set>
+#include <vector>
 
 class QPainter;
 
@@ -111,7 +114,20 @@ public:
         // bottom of the view, whatever its value: for showing where
         // there is something and where there is not.  Display only: no
         // vertical scale, no labels, no editing
-        PlotStrip
+        PlotStrip,
+
+        // Each region a box exactly as long as the region, in one row
+        // along the bottom of the view just above where PlotStrip
+        // draws, with its label centred on it: for words and when they
+        // are sung.  A label longer than its box runs over its edges,
+        // and is moved sideways, with the labels before it, to keep
+        // clear of them; one that cannot be goes in a second row above
+        // the boxes, or is left out when that has no room either.  The
+        // font grows as the view zooms in, more slowly than the boxes.
+        // The region at the highlight frame, if one is set, is drawn
+        // in another colour, and its label in the boxes' row over the
+        // others if it had no room.  Display only, as PlotStrip
+        PlotLyrics
     };
 
     void setPlotStyle(PlotStyle style);
@@ -119,7 +135,68 @@ public:
 
     bool isLayerScrollable(const LayerGeometryProvider *v) const override;
 
-    bool isLayerEditable() const override { return m_plotStyle != PlotStrip; }
+    bool isLayerEditable() const override {
+        return m_plotStyle != PlotStrip && m_plotStyle != PlotLyrics;
+    }
+
+    /// A region of PlotLyrics, from x0 to x1, whose label is this wide
+    struct LyricsLabel {
+        double x0;
+        double x1;
+        double width;
+    };
+
+    /// Where a label goes: its row (-1 if none) and its left edge
+    struct LyricsLabelPlace {
+        int row;
+        double left;
+    };
+
+    /**
+     * Where the labels of PlotLyrics go, given in the order of the
+     * regions.  A label is centred on its region if that leaves at
+     * least gap between it and the label before it in the row.  If
+     * not, it is moved right, and the labels before it moved left,
+     * as little as will do, but no label so far that its middle
+     * leaves its region.  A label goes in the first of the given
+     * number of rows where that works, and gets row -1 if there is
+     * no such row.
+     */
+    static std::vector<LyricsLabelPlace> placeLyricsLabels
+    (const std::vector<LyricsLabel> &labels, int rows, double gap);
+
+    /**
+     * The pixel size of the font of PlotLyrics: twice the view's own
+     * at the least, larger as the view zooms in (more pixels per
+     * second), up to four times the view's, and never more than an
+     * eighth of the view's height, so that the rows leave room for
+     * the rest of it.  It grows with the square root of the zoom, so
+     * that the boxes, which grow with the zoom itself, get roomier
+     * for their words the further the view is zoomed in.
+     */
+    static int getLyricsFontPixelSize(double pixelsPerSecond,
+                                      int basePixelSize,
+                                      int paintHeight);
+
+    /**
+     * The region containing this frame is drawn highlighted, for
+     * PlotLyrics: the word being sung.  A negative frame highlights
+     * nothing.  The view is repainted only when that changes which
+     * region it is, not for every frame.
+     */
+    void setHighlightFrame(sv_frame_t frame);
+    sv_frame_t getHighlightFrame() const { return m_highlightFrame; }
+
+    /// The region that is highlighted now; false if none is
+    bool getHighlightedEvent(Event &) const;
+
+    /**
+     * Where PlotLyrics last drew its boxes in this view, in the view's
+     * own coordinates (not those of a high-resolution proxy): the row
+     * a pointer has to be in to be over a box.  Empty if the layer has
+     * not been painted in the view.
+     */
+    QRect getLyricsBoxRow(const LayerGeometryProvider *v) const;
 
     int getCompletion(LayerGeometryProvider *) const override;
 
@@ -138,6 +215,7 @@ public:
 
 protected slots:
     void recalcSpacing();
+    void lyricsModelChanged();
 
 protected:
     double getValueForY(LayerGeometryProvider *v, int y, int avoid) const;
@@ -149,6 +227,9 @@ protected:
     EventVector getLocalPoints(LayerGeometryProvider *v, int x) const;
 
     bool getPointToDrag(LayerGeometryProvider *v, int x, int y, Event &) const;
+
+    void paintLyrics(LayerGeometryProvider *v, QPainter &paint, QRect rect) const;
+    bool findLyricsEventAt(sv_frame_t frame, Event &found) const;
 
     ModelId m_model;
     bool m_editing;
@@ -165,6 +246,11 @@ protected:
     PlotStyle m_plotStyle;
     bool m_propertiesExplicitlySet;
 
+    // PlotLyrics: the frame asked for, and the region it falls in
+    sv_frame_t m_highlightFrame;
+    bool m_haveHighlight;
+    Event m_highlightEvent;
+
     typedef std::map<double, int> SpacingMap;
 
     // region value -> ordering
@@ -172,6 +258,32 @@ protected:
 
     // region value -> number of regions with this value
     SpacingMap m_distributionMap;
+
+    // Where the labels of PlotLyrics go depends on the labels before
+    // them, so they are laid out for the whole model at once, for one
+    // zoom level and font, not in each paint: a view that scrolls
+    // repaints only the part that comes into sight, and that has to
+    // agree with what is on show already
+    struct LyricsLayout {
+        bool valid = false;
+        ZoomLevel zoom;
+        QString font;
+        int eventCount = 0;
+        sv_frame_t startFrame = 0;
+        sv_frame_t endFrame = 0;
+        struct Place {
+            int row;                     // -1 for a label left out
+            double offset;               // of the label, from the box
+            double centred;              // the same, centred on it
+        };
+        std::map<Event, Place> places;
+        std::set<Event> lineStarts;      // drawn in bold
+        int maxReach = 0;                // of a label past its box
+    };
+    mutable LyricsLayout m_lyricsLayout;
+
+    // view id -> the row of boxes last painted there
+    mutable std::map<int, QRect> m_lyricsBoxRows;
 
     int spacingIndexToY(LayerGeometryProvider *v, int i) const;
     double yToSpacingIndex(LayerGeometryProvider *v, int y) const;

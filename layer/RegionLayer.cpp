@@ -38,6 +38,11 @@
 #include <QPainter>
 #include <QPainterPath>
 #include <QMouseEvent>
+#include <QFontMetrics>
+#include <QFontInfo>
+
+#include <algorithm>
+#include <limits>
 #include <QTextStream>
 #include <QMessageBox>
 
@@ -60,7 +65,10 @@ RegionLayer::RegionLayer() :
     m_colourMap(0),
     m_colourInverted(false),
     m_plotStyle(PlotLines),
-    m_propertiesExplicitlySet(false)
+    m_propertiesExplicitlySet(false),
+    m_highlightFrame(-1),
+    m_haveHighlight(false),
+    m_highlightEvent(0)
 {
     
 }
@@ -92,6 +100,13 @@ RegionLayer::setModel(ModelId modelId)
 
         connect(newModel.get(), SIGNAL(modelChanged(ModelId)),
                 this, SLOT(recalcSpacing()));
+
+        // Member pointers: a string connection naming ModelId or
+        // sv_frame_t fails silently with some Qt versions
+        connect(newModel.get(), &Model::modelChanged,
+                this, &RegionLayer::lyricsModelChanged);
+        connect(newModel.get(), &Model::modelChangedWithin,
+                this, &RegionLayer::lyricsModelChanged);
     
         recalcSpacing();
 
@@ -163,7 +178,7 @@ RegionLayer::getPropertyRangeAndValue(const PropertyName &name,
     } else if (name == "Plot Type") {
         
         if (min) *min = 0;
-        if (max) *max = 2;
+        if (max) *max = 3;
         if (deflt) *deflt = 0;
         
         val = int(m_plotStyle);
@@ -206,6 +221,7 @@ RegionLayer::getPropertyValueLabel(const PropertyName &name,
         case 0: return tr("Bars");
         case 1: return tr("Segmentation");
         case 2: return tr("Strip");
+        case 3: return tr("Lyrics");
         }
 
     } else if (name == "Vertical Scale") {
@@ -311,8 +327,10 @@ RegionLayer::getVerticalExtents() const
     auto model = ModelById::getAs<RegionModel>(m_model);
     if (!model) return NO_VERTICAL_EXTENTS;
 
-    // A strip is not placed by value
-    if (m_plotStyle == PlotStrip) return NO_VERTICAL_EXTENTS;
+    // A strip is not placed by value, and neither are lyrics
+    if (m_plotStyle == PlotStrip || m_plotStyle == PlotLyrics) {
+        return NO_VERTICAL_EXTENTS;
+    }
     
     double min = model->getValueMinimum();
     double max = model->getValueMaximum();
@@ -415,7 +433,7 @@ RegionLayer::getFeatureDescription(LayerGeometryProvider *v, QPoint &pos) const
 {
     int x = pos.x();
 
-    if (m_plotStyle == PlotStrip) return "";
+    if (m_plotStyle == PlotStrip || m_plotStyle == PlotLyrics) return "";
 
     auto model = ModelById::getAs<RegionModel>(m_model);
     if (!model || !model->getSampleRate()) return "";
@@ -801,6 +819,11 @@ RegionLayer::paint(LayerGeometryProvider *v, QPainter &paint, QRect rect) const
 
 //    Profiler profiler("RegionLayer::paint", true);
 
+    if (m_plotStyle == PlotLyrics) {
+        paintLyrics(v, paint, rect);
+        return;
+    }
+
     // Allow margin so as to improve our odds of repainting the heads
     // or tails of labels
     int margin = 100;
@@ -1064,12 +1087,391 @@ RegionLayer::paint(LayerGeometryProvider *v, QPainter &paint, QRect rect) const
     paint.restore();
 }
 
+std::vector<RegionLayer::LyricsLabelPlace>
+RegionLayer::placeLyricsLabels(const std::vector<LyricsLabel> &labels,
+                               int rows, double gap)
+{
+    std::vector<LyricsLabelPlace> places(labels.size(), { -1, 0.0 });
+
+    // How far each label may go either way: while its middle is still
+    // over its own region, it can be told whose it is
+    auto centred = [&](size_t i) {
+        return (labels[i].x0 + labels[i].x1 - labels[i].width) / 2.0;
+    };
+    auto slack = [&](size_t i) {
+        return std::max(labels[i].x1 - labels[i].x0, 0.0) / 2.0;
+    };
+
+    // The labels in each row so far, in order: the last is the one
+    // that ends furthest right, as each starts after the one before
+    std::vector<std::vector<size_t>> placed(std::max(rows, 0));
+
+    for (size_t i = 0; i < labels.size(); ++i) {
+
+        double wanted = centred(i);
+        double furthest = wanted + slack(i);
+
+        for (int r = 0; r < int(placed.size()); ++r) {
+
+            std::vector<size_t> &row = placed[r];
+
+            if (row.empty()) {
+                places[i] = { r, wanted };
+                row.push_back(i);
+                break;
+            }
+
+            size_t last = row.back();
+            double free = places[last].left + labels[last].width + gap;
+
+            if (wanted >= free || furthest >= free) {
+                places[i] = { r, std::max(wanted, free) };
+                row.push_back(i);
+                break;
+            }
+
+            // As far right as it may go, and the labels before it back
+            // out of its way, each only as far as the next one needs
+            std::vector<std::pair<size_t, double>> moves;
+            double bound = furthest - gap;
+            bool fits = true;
+            for (auto k = row.rbegin(); k != row.rend(); ++k) {
+                size_t j = *k;
+                if (places[j].left + labels[j].width <= bound) break;
+                double left = bound - labels[j].width;
+                if (left < centred(j) - slack(j)) {
+                    fits = false;
+                    break;
+                }
+                moves.push_back({ j, left });
+                bound = left - gap;
+            }
+            if (!fits) continue;
+
+            for (const auto &m : moves) places[m.first].left = m.second;
+            places[i] = { r, furthest };
+            row.push_back(i);
+            break;
+        }
+
+        if (places[i].row < 0) places[i].left = wanted;
+    }
+
+    return places;
+}
+
+int
+RegionLayer::getLyricsFontPixelSize(double pixelsPerSecond,
+                                    int basePixelSize,
+                                    int paintHeight)
+{
+    // Twice the view's font, the smallest that could be read while
+    // singing, up to four times.  It starts to grow at the zoom at
+    // which a word of about five letters that takes a quarter of a
+    // second fills its box, and then twice as large takes four times
+    // the zoom: the boxes grow faster than their words, so that
+    // zooming in gives the words room
+    const double pixelsPerSecondPerPixel = 10.0;
+
+    int base = std::max(basePixelSize, 1);
+    int lo = 2 * base;
+    int hi = 4 * base;
+
+    // Two rows of it take less than a third of the view
+    int byHeight = paintHeight / 8;
+    if (byHeight < hi) hi = std::max(base, byHeight);
+    if (lo > hi) lo = hi;
+
+    double growFrom = lo * pixelsPerSecondPerPixel;
+    double size = lo;
+    if (pixelsPerSecond > growFrom) {
+        size = lo * std::sqrt(pixelsPerSecond / growFrom);
+    }
+    return std::min(std::max(int(std::lround(size)), lo), hi);
+}
+
+void
+RegionLayer::setHighlightFrame(sv_frame_t frame)
+{
+    m_highlightFrame = frame;
+
+    Event found(0);
+    bool have = findLyricsEventAt(frame, found);
+
+    if (have == m_haveHighlight && (!have || found == m_highlightEvent)) {
+        return;
+    }
+
+    m_haveHighlight = have;
+    m_highlightEvent = found;
+
+    // Drawn into the view's cache with the rest of the layer, so the
+    // view has to paint it again; only when the word changes, which is
+    // a few times a second at most
+    if (m_plotStyle == PlotLyrics) emit layerParametersChanged();
+}
+
+bool
+RegionLayer::findLyricsEventAt(sv_frame_t frame, Event &found) const
+{
+    bool have = false;
+    auto model = ModelById::getAs<RegionModel>(m_model);
+    if (model && frame >= 0) {
+        // The latest to start, if regions overlap: the word being sung
+        for (const Event &e : model->getEventsCovering(frame)) {
+            if (!have || found.getFrame() < e.getFrame()) {
+                found = e;
+                have = true;
+            }
+        }
+    }
+    return have;
+}
+
+void
+RegionLayer::lyricsModelChanged()
+{
+    if (m_plotStyle != PlotLyrics) return;
+
+    // A word edited keeps the number of words and often the extent of
+    // the whole, which is all the layout would otherwise notice; and a
+    // label moved can move the ones before it and change the rows of
+    // those after, anywhere in the view, not only where the edit was
+    m_lyricsLayout.valid = false;
+
+    // The word being sung may be the one that changed, or be another
+    // one now
+    Event found(0);
+    m_haveHighlight = findLyricsEventAt(m_highlightFrame, found);
+    m_highlightEvent = found;
+
+    emit layerParametersChanged();
+}
+
+QRect
+RegionLayer::getLyricsBoxRow(const LayerGeometryProvider *v) const
+{
+    if (!v) return QRect();
+    auto i = m_lyricsBoxRows.find(v->getId());
+    if (i == m_lyricsBoxRows.end()) return QRect();
+    return i->second;
+}
+
+bool
+RegionLayer::getHighlightedEvent(Event &e) const
+{
+    if (!m_haveHighlight) return false;
+    e = m_highlightEvent;
+    return true;
+}
+
+void
+RegionLayer::paintLyrics(LayerGeometryProvider *v, QPainter &paint, QRect rect) const
+{
+    auto model = ModelById::getAs<RegionModel>(m_model);
+    if (!model || !model->getSampleRate()) return;
+
+    // The boxes in one row along the bottom of the view, clear of where
+    // PlotStrip draws, with the labels in them; above them a second row
+    // for labels that have no room in the first
+    static const int rowCount = 2;
+
+    ZoomLevel zoom = v->getZoomLevel();
+    double pixelsPerFrame = (zoom.zone == ZoomLevel::FramesPerPixel ?
+                             1.0 / zoom.level : double(zoom.level));
+
+    QFont plainFont = paint.font();
+    plainFont.setPixelSize(getLyricsFontPixelSize
+                           (pixelsPerFrame * model->getSampleRate(),
+                            QFontInfo(paint.font()).pixelSize(),
+                            v->getPaintHeight()));
+    QFont boldFont = plainFont;
+    boldFont.setBold(true);
+    QFontMetrics plainMetrics(plainFont);
+    QFontMetrics boldMetrics(boldFont);
+
+    // Each label has a halo in the colour of its box, so that where it
+    // runs over the box's edge, or past it, it can still be read.  The
+    // space between labels can be less than a space between words:
+    // the edges of the boxes tell the words apart
+    double halo = std::max(plainFont.pixelSize() / 8.0, 2.0);
+    double gap = std::max(plainFont.pixelSize() / 6.0, 2.0);
+
+    int rowHeight = plainMetrics.height() + v->scalePixelSize(4);
+    int boxBottom = v->getPaintHeight() - v->scalePixelSize(8);
+    int boxTop = boxBottom - rowHeight;
+
+    auto rowTop = [&](int row) {
+        return boxTop - row * (rowHeight + v->scalePixelSize(2));
+    };
+
+    // For whoever needs to know where the pointer is over a box: in
+    // the view's coordinates, where a mouse event has them, not in the
+    // proxy's, which may be twice as large
+    int scale = std::max(v->getScaleFactor(), 1);
+    m_lyricsBoxRows[v->getId()] =
+        QRect(0, boxTop / scale, v->getPaintWidth() / scale, rowHeight / scale);
+
+    LyricsLayout &layout = m_lyricsLayout;
+    if (!layout.valid ||
+        !(layout.zoom == zoom) ||
+        layout.font != plainFont.toString() ||
+        layout.eventCount != model->getEventCount() ||
+        layout.startFrame != model->getStartFrame() ||
+        layout.endFrame != model->getEndFrame()) {
+
+        // Laid out on the whole timeline, not the view, so that the
+        // answer is the same wherever the view is scrolled to
+        EventVector all = model->getAllEvents();
+        std::vector<LyricsLabel> labels;
+        labels.reserve(all.size());
+
+        layout = LyricsLayout();
+        layout.zoom = zoom;
+        layout.font = plainFont.toString();
+        layout.eventCount = model->getEventCount();
+        layout.startFrame = model->getStartFrame();
+        layout.endFrame = model->getEndFrame();
+
+        // The first word of a line, where the value (the line) changes
+        bool first = true;
+        double previousValue = 0.0;
+        for (const Event &e : all) {
+            bool lineStart = (first || e.getValue() != previousValue);
+            first = false;
+            previousValue = e.getValue();
+            if (lineStart) layout.lineStarts.insert(e);
+            const QFontMetrics &metrics =
+                lineStart ? boldMetrics : plainMetrics;
+            labels.push_back
+                ({ double(e.getFrame()) * pixelsPerFrame,
+                   double(e.getFrame() + e.getDuration()) * pixelsPerFrame,
+                   double(metrics.horizontalAdvance(e.getLabel())) });
+        }
+
+        std::vector<LyricsLabelPlace> places =
+            placeLyricsLabels(labels, rowCount, gap);
+
+        double reach = 0.0;
+        for (int i = 0; i < int(all.size()); ++i) {
+            const LyricsLabel &label = labels[i];
+            double centred = (label.x0 + label.x1 - label.width) / 2.0;
+            for (double left : { places[i].left, centred }) {
+                reach = std::max({ reach,
+                                   label.x0 - left,
+                                   left + label.width - label.x1 });
+            }
+            layout.places[all[i]] = { places[i].row,
+                                      places[i].left - label.x0,
+                                      centred - label.x0 };
+        }
+        layout.maxReach = int(std::ceil(reach + halo)) + 1;
+
+        layout.valid = true;
+    }
+
+    // A label can reach into what is being painted from a box to
+    // either side of it
+    sv_frame_t frame0 = v->getFrameForX(rect.left() - layout.maxReach);
+    sv_frame_t frame1 = v->getFrameForX(rect.right() + layout.maxReach + 1);
+    if (frame0 < 0) frame0 = 0;
+    if (frame1 <= frame0) return;
+
+    EventVector points(model->getEventsSpanning(frame0, frame1 - frame0));
+    if (points.empty()) return;
+
+    // Dark text on light boxes whatever the view's colours, so that
+    // the words can be read over anything; the word being sung in amber
+    const QColor boxFill(235, 240, 250, 235);
+    const QColor boxEdge(170, 180, 200);
+    const QColor highlightFill(255, 212, 125, 245);
+    const QColor highlightEdge(215, 145, 40);
+    const QColor textColour(20, 20, 20);
+
+    paint.save();
+    paint.setRenderHint(QPainter::Antialiasing, true);
+    paint.setRenderHint(QPainter::TextAntialiasing, true);
+
+    // Each box from the pixel of its region's start to the one before
+    // its end, and nothing added: next to each other, two words' boxes
+    // share the line between them at the time the one starts
+    for (const Event &e : points) {
+        bool highlighted = (m_haveHighlight && e == m_highlightEvent);
+        int x = v->getXForFrame(e.getFrame());
+        int ex = v->getXForFrame(e.getFrame() + e.getDuration());
+        if (ex - x < 3) {
+            paint.fillRect(x, boxTop, std::max(ex - x, 1), rowHeight,
+                           highlighted ? highlightEdge : boxEdge);
+            continue;
+        }
+        QRectF box(x + 0.5, boxTop + 0.5, ex - x - 1, rowHeight - 1);
+        double radius = std::min(3.0, (ex - x - 1) / 2.0);
+        paint.setPen(highlighted ? highlightEdge : boxEdge);
+        paint.setBrush(highlighted ? highlightFill : boxFill);
+        paint.drawRoundedRect(box, radius, radius);
+    }
+
+    auto drawLabel = [&](const Event &e, int row, double left,
+                         bool highlighted) {
+        bool lineStart =
+            (layout.lineStarts.find(e) != layout.lineStarts.end());
+        const QFont &font = lineStart ? boldFont : plainFont;
+        const QFontMetrics &metrics = lineStart ? boldMetrics : plainMetrics;
+        double baseline = rowTop(row) +
+            (rowHeight - metrics.height()) / 2.0 + metrics.ascent();
+
+        QPainterPath path;
+        path.addText(QPointF(left, baseline), font, e.getLabel());
+
+        QColor haloColour = highlighted ? highlightFill : boxFill;
+        haloColour.setAlpha(255);
+        paint.setPen(QPen(haloColour, halo, Qt::SolidLine,
+                          Qt::RoundCap, Qt::RoundJoin));
+        paint.setBrush(Qt::NoBrush);
+        paint.drawPath(path);
+
+        paint.setPen(Qt::NoPen);
+        paint.setBrush(textColour);
+        paint.drawPath(path);
+    };
+
+    bool highlightLeftOut = false;
+    double highlightLeft = 0.0;
+
+    for (const Event &e : points) {
+        bool highlighted = (m_haveHighlight && e == m_highlightEvent);
+        auto place = layout.places.find(e);
+        if (place == layout.places.end()) continue;
+        int x = v->getXForFrame(e.getFrame());
+        if (place->second.row < 0) {
+            if (highlighted) {
+                highlightLeftOut = true;
+                highlightLeft = x + place->second.centred;
+            }
+            continue;
+        }
+        drawLabel(e, place->second.row, x + place->second.offset,
+                  highlighted);
+    }
+
+    // The word being sung is the one the singer has to be able to
+    // read: if it has no room of its own, it goes in the boxes' row,
+    // centred on its box over whatever is there, for as long as it is
+    // being sung
+    if (highlightLeftOut) {
+        drawLabel(m_highlightEvent, 0, highlightLeft, true);
+    }
+
+    paint.restore();
+}
+
 int
 RegionLayer::getVerticalScaleWidth(LayerGeometryProvider *v, bool, QPainter &paint) const
 {
     auto model = ModelById::getAs<RegionModel>(m_model);
     if (!model ||
         m_plotStyle == PlotStrip ||
+        m_plotStyle == PlotLyrics ||
         m_verticalScale == AutoAlignScale ||
         m_verticalScale == EqualSpaced) {
         return 0;
