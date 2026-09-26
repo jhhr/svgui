@@ -222,6 +222,17 @@ public:
     void setShowCentreLine(bool show);
     bool shouldShowCentreLine() const { return m_showCentreLine; }
 
+    /**
+     * How large layers draw the elements of their plots (points,
+     * lines, notes) against their normal size: 1.0 is normal. Views
+     * apply it with the pixel ratio (LayerGeometryProvider::
+     * scalePlotSize(), and the pen widths of layers painted through a
+     * ViewProxy), and draw again when it changes. It is not saved
+     * here: the application keeps it with its own settings.
+     */
+    void setPlotScale(double scale);
+    double getPlotScale() const { return m_plotScale; }
+
     bool shouldShowDuration() const {
         return m_overlayMode != NoOverlays && m_showDuration;
     }
@@ -332,6 +343,9 @@ signals:
     /** Emitted when the centre line visibility has been changed. */
     void showCentreLineChanged();
 
+    /** Emitted when the plot scale has been changed. */
+    void plotScaleChanged();
+
     /** Emitted when the zoom wheels have been toggled. */
     void zoomWheelsEnabledChanged();
 
@@ -404,6 +418,7 @@ protected:
     bool m_zoomWheelsEnabled;
     bool m_opportunisticEditingEnabled;
     bool m_showCentreLine;
+    double m_plotScale;
     bool m_illuminateLocalFeatures;
     bool m_showWorkTitle;
     bool m_showDuration;

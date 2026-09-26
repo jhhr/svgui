@@ -52,6 +52,7 @@ ViewManager::ViewManager() :
     m_zoomWheelsEnabled(true),
     m_opportunisticEditingEnabled(true),
     m_showCentreLine(true),
+    m_plotScale(1.0),
     m_illuminateLocalFeatures(true),
     m_showWorkTitle(false),
     m_showDuration(true),
@@ -792,6 +793,16 @@ ViewManager::setShowCentreLine(bool show)
     settings.beginGroup("MainWindow");
     settings.setValue("show-centre-line", int(m_showCentreLine));
     settings.endGroup();
+}
+
+void
+ViewManager::setPlotScale(double scale)
+{
+    if (!(scale > 0.0)) return;
+    if (m_plotScale != scale) {
+        m_plotScale = scale;
+        emit plotScaleChanged();
+    }
 }
 
 void

@@ -387,6 +387,7 @@ public:
     int scalePixelSize(int size) const override;
     double scalePenWidth(double width) const override;
     QPen scalePen(QPen pen) const override;
+    double scalePlotSize(double size) const override;
 
     typedef std::set<ModelId> ModelSet;
     ModelSet getModels();

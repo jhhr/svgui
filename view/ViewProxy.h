@@ -198,13 +198,17 @@ public:
      * Scale up pen width for a hi-dpi display without pixel doubling.
      * This is like scaleSize except that it also scales the
      * zero-width case.
+     *
+     * The pens of layers are the lines of their plots, so the width
+     * is scaled as scalePlotSize() does, by the whole pixel ratio and
+     * the plot scale, not by the square root of the ratio, which at
+     * ratio 3 leaves a line a little over half a logical pixel wide.
      */
     double scalePenWidth(double width) const override {
         if (width <= 0) { // zero-width pen, produce a scaled one-pixel pen
             width = 1;
         }
-        width *= sqrt(double(m_scaleFactor));
-        return m_view->scalePenWidth(width);
+        return m_view->scalePenWidth(scalePlotSize(width));
     }
 
     /**
@@ -213,7 +217,11 @@ public:
     QPen scalePen(QPen pen) const override {
         return QPen(pen.color(), scalePenWidth(pen.width()));
     }
-    
+
+    double scalePlotSize(double size) const override {
+        return m_view->scalePlotSize(size) * m_scaleFactor;
+    }
+
     View *getView() override { return m_view; }
     const View *getView() const override { return m_view; }
 
