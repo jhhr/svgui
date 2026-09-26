@@ -2502,8 +2502,10 @@ View::paintEvent(QPaintEvent *e)
     ViewProxy aligningProxy(this, dpratio, alignmentModelId);
     
     // Scrollable (cacheable) items first. If we are repainting the
-    // cache, then we paint these to the cache; otherwise straight to
-    // the buffer.
+    // cache, then we paint these to the cache; if we are not using it,
+    // straight to the buffer. If we are using the cache as it is, they
+    // are in it already: painted to the buffer they would only be
+    // covered by the cache below.
     QPainter paint;
     if (shouldRepaintCache) {
         paint.begin(m_cache);
@@ -2551,7 +2553,7 @@ View::paintEvent(QPaintEvent *e)
         // enable it itself
         if (shouldRepaintCache) {
             paintLayer(layer, m_cache, cacheAreaToRepaint, false);
-        } else {
+        } else if (!shouldUseCache) {
             paintLayer(layer, m_buffer, requestedPaintArea, false);
         }
     }
