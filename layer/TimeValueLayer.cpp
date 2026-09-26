@@ -960,11 +960,12 @@ TimeValueLayer::paint(LayerGeometryProvider *v, QPainter &paint, QRect rect) con
         v->getXForFrame(frame0 + model->getResolution()) -
         v->getXForFrame(frame0);
 
-    if (m_plotStyle == PlotStems) {
-        if (w < 2) w = 2;
-    } else {
-        if (w < 1) w = 1;
-    }
+    // The least width of a point and its height are logical pixels,
+    // at the plot scale, so that a point keeps its size on a hi-dpi
+    // display
+    int minWidth = v->scalePlotPixelSize(m_plotStyle == PlotStems ? 2 : 1);
+    if (w < minWidth) w = minWidth;
+    int pointHeight = v->scalePlotPixelSize(2);
 
     paint.save();
 
@@ -1092,9 +1093,9 @@ TimeValueLayer::paint(LayerGeometryProvider *v, QPainter &paint, QRect rect) con
         
         if (m_plotStyle == PlotStems) {
             if (y < origin - 1) {
-                paint.drawLine(x + w/2, y + 1, x + w/2, origin);
+                paint.drawLine(x + w/2, y + pointHeight/2, x + w/2, origin);
             } else if (y > origin + 1) {
-                paint.drawLine(x + w/2, origin, x + w/2, y - 1);
+                paint.drawLine(x + w/2, origin, x + w/2, y - pointHeight/2);
             }
         }
 
@@ -1109,7 +1110,7 @@ TimeValueLayer::paint(LayerGeometryProvider *v, QPainter &paint, QRect rect) con
             }
             if (m_plotStyle != PlotStems ||
                 w > 1) {
-                paint.drawRect(x, y - 1, w, 2);
+                paint.drawRect(x, y - pointHeight/2, w, pointHeight);
             }
             if (illuminate) {
                 paint.restore();
