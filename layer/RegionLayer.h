@@ -179,6 +179,15 @@ public:
                                       int paintHeight);
 
     /**
+     * For PlotLyrics: draw the words at this share of the size
+     * getLyricsFontPixelSize() gives. A phone's screen, held at
+     * arm's length, shows a whole verse only with smaller words.
+     * 1 by default; not saved with the layer.
+     */
+    void setLyricsTextScale(double scale);
+    double getLyricsTextScale() const { return m_lyricsTextScale; }
+
+    /**
      * The region containing this frame is drawn highlighted, for
      * PlotLyrics: the word being sung.  A negative frame highlights
      * nothing.  The view is repainted only when that changes which
@@ -248,6 +257,7 @@ protected:
 
     // PlotLyrics: the frame asked for, and the region it falls in
     sv_frame_t m_highlightFrame;
+    double m_lyricsTextScale;
     bool m_haveHighlight;
     Event m_highlightEvent;
 
