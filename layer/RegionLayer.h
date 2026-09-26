@@ -116,17 +116,17 @@ public:
         // vertical scale, no labels, no editing
         PlotStrip,
 
-        // Each region a box as long as the region along the bottom of
-        // the view, just above where PlotStrip draws, with its label
-        // centred in it: for words and when they are sung.  A label
-        // longer than its box widens the box around its middle, and
-        // one that would run into the one before goes to a second row,
-        // or is left out when that has no room either; a bar under the
-        // boxes shows every region's extent all the same.  The font
-        // grows as the view zooms in.  The region at the highlight
-        // frame, if one is set, is drawn in another colour, and in the
-        // lowest row over the others if it had no room.  Display only,
-        // as PlotStrip
+        // Each region a box exactly as long as the region, in one row
+        // along the bottom of the view just above where PlotStrip
+        // draws, with its label centred on it: for words and when they
+        // are sung.  A label longer than its box runs over its edges,
+        // and is moved sideways, with the labels before it, to keep
+        // clear of them; one that cannot be goes in a second row above
+        // the boxes, or is left out when that has no room either.  The
+        // font grows as the view zooms in, more slowly than the boxes.
+        // The region at the highlight frame, if one is set, is drawn
+        // in another colour, and its label in the boxes' row over the
+        // others if it had no room.  Display only, as PlotStrip
         PlotLyrics
     };
 
@@ -139,32 +139,40 @@ public:
         return m_plotStyle != PlotStrip && m_plotStyle != PlotLyrics;
     }
 
-    /**
-     * The rows of the labels of PlotLyrics.  Each label is given as
-     * its left edge and width, in the order of the regions.  A label
-     * goes in the first of the given number of rows in which it
-     * starts at least gap after every label already there ends, or
-     * gets -1 if there is no such row.
-     */
-    static std::vector<int> assignLabelRows
-    (const std::vector<std::pair<double, double>> &xAndWidth,
-     int rows, double gap);
+    /// A region of PlotLyrics, from x0 to x1, whose label is this wide
+    struct LyricsLabel {
+        double x0;
+        double x1;
+        double width;
+    };
+
+    /// Where a label goes: its row (-1 if none) and its left edge
+    struct LyricsLabelPlace {
+        int row;
+        double left;
+    };
 
     /**
-     * The left edge and width of the box of a region that runs from
-     * x0 to x1 and whose label is textWidth wide: the region itself,
-     * or the label's width centred on the region's middle if the
-     * label does not fit.
+     * Where the labels of PlotLyrics go, given in the order of the
+     * regions.  A label is centred on its region if that leaves at
+     * least gap between it and the label before it in the row.  If
+     * not, it is moved right, and the labels before it moved left,
+     * as little as will do, but no label so far that its middle
+     * leaves its region.  A label goes in the first of the given
+     * number of rows where that works, and gets row -1 if there is
+     * no such row.
      */
-    static std::pair<double, double> getLyricsBoxSpan
-    (double x0, double x1, double textWidth);
+    static std::vector<LyricsLabelPlace> placeLyricsLabels
+    (const std::vector<LyricsLabel> &labels, int rows, double gap);
 
     /**
      * The pixel size of the font of PlotLyrics: twice the view's own
      * at the least, larger as the view zooms in (more pixels per
      * second), up to four times the view's, and never more than an
      * eighth of the view's height, so that the rows leave room for
-     * the rest of it.
+     * the rest of it.  It grows with the square root of the zoom, so
+     * that the boxes, which grow with the zoom itself, get roomier
+     * for their words the further the view is zoomed in.
      */
     static int getLyricsFontPixelSize(double pixelsPerSecond,
                                       int basePixelSize,
@@ -253,9 +261,14 @@ protected:
         int eventCount = 0;
         sv_frame_t startFrame = 0;
         sv_frame_t endFrame = 0;
-        std::map<Event, int> rows;       // -1 for a label left out
+        struct Place {
+            int row;                     // -1 for a label left out
+            double offset;               // of the label, from the box
+            double centred;              // the same, centred on it
+        };
+        std::map<Event, Place> places;
         std::set<Event> lineStarts;      // drawn in bold
-        int maxWidth = 0;                // of a box, in pixels
+        int maxReach = 0;                // of a label past its box
     };
     mutable LyricsLayout m_lyricsLayout;
 
