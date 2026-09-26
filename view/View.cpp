@@ -1707,7 +1707,8 @@ View::getScrollableBackLayers(bool testChanged, bool &changed) const
             scrollables.clear();
             if (metUnscrollable) break;
         }
-        if (!metUnscrollable && (*i)->isLayerScrollable(this)) {
+        if (!metUnscrollable && (*i)->isLayerScrollable(this) &&
+            (*i)->isCachedInView()) {
             scrollables.push_back(*i);
         } else {
             metUnscrollable = true;
@@ -1734,7 +1735,8 @@ View::getNonScrollableFrontLayers(bool testChanged, bool &changed) const
 
     for (LayerList::const_iterator i = m_layerStack.begin(); i != m_layerStack.end(); ++i) {
         if ((*i)->isLayerDormant(this)) continue;
-        if (!started && (*i)->isLayerScrollable(this)) {
+        if (!started && (*i)->isLayerScrollable(this) &&
+            (*i)->isCachedInView()) {
             continue;
         }
         started = true;
