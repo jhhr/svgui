@@ -100,6 +100,13 @@ RegionLayer::setModel(ModelId modelId)
 
         connect(newModel.get(), SIGNAL(modelChanged(ModelId)),
                 this, SLOT(recalcSpacing()));
+
+        // Member pointers: a string connection naming ModelId or
+        // sv_frame_t fails silently with some Qt versions
+        connect(newModel.get(), &Model::modelChanged,
+                this, &RegionLayer::lyricsModelChanged);
+        connect(newModel.get(), &Model::modelChangedWithin,
+                this, &RegionLayer::lyricsModelChanged);
     
         recalcSpacing();
 
@@ -1188,19 +1195,8 @@ RegionLayer::setHighlightFrame(sv_frame_t frame)
 {
     m_highlightFrame = frame;
 
-    bool have = false;
     Event found(0);
-
-    auto model = ModelById::getAs<RegionModel>(m_model);
-    if (model && frame >= 0) {
-        // The latest to start, if regions overlap: the word being sung
-        for (const Event &e : model->getEventsCovering(frame)) {
-            if (!have || found.getFrame() < e.getFrame()) {
-                found = e;
-                have = true;
-            }
-        }
-    }
+    bool have = findLyricsEventAt(frame, found);
 
     if (have == m_haveHighlight && (!have || found == m_highlightEvent)) {
         return;
@@ -1213,6 +1209,52 @@ RegionLayer::setHighlightFrame(sv_frame_t frame)
     // view has to paint it again; only when the word changes, which is
     // a few times a second at most
     if (m_plotStyle == PlotLyrics) emit layerParametersChanged();
+}
+
+bool
+RegionLayer::findLyricsEventAt(sv_frame_t frame, Event &found) const
+{
+    bool have = false;
+    auto model = ModelById::getAs<RegionModel>(m_model);
+    if (model && frame >= 0) {
+        // The latest to start, if regions overlap: the word being sung
+        for (const Event &e : model->getEventsCovering(frame)) {
+            if (!have || found.getFrame() < e.getFrame()) {
+                found = e;
+                have = true;
+            }
+        }
+    }
+    return have;
+}
+
+void
+RegionLayer::lyricsModelChanged()
+{
+    if (m_plotStyle != PlotLyrics) return;
+
+    // A word edited keeps the number of words and often the extent of
+    // the whole, which is all the layout would otherwise notice; and a
+    // label moved can move the ones before it and change the rows of
+    // those after, anywhere in the view, not only where the edit was
+    m_lyricsLayout.valid = false;
+
+    // The word being sung may be the one that changed, or be another
+    // one now
+    Event found(0);
+    m_haveHighlight = findLyricsEventAt(m_highlightFrame, found);
+    m_highlightEvent = found;
+
+    emit layerParametersChanged();
+}
+
+QRect
+RegionLayer::getLyricsBoxRow(const LayerGeometryProvider *v) const
+{
+    if (!v) return QRect();
+    auto i = m_lyricsBoxRows.find(v->getId());
+    if (i == m_lyricsBoxRows.end()) return QRect();
+    return i->second;
 }
 
 bool
@@ -1262,6 +1304,13 @@ RegionLayer::paintLyrics(LayerGeometryProvider *v, QPainter &paint, QRect rect) 
     auto rowTop = [&](int row) {
         return boxTop - row * (rowHeight + v->scalePixelSize(2));
     };
+
+    // For whoever needs to know where the pointer is over a box: in
+    // the view's coordinates, where a mouse event has them, not in the
+    // proxy's, which may be twice as large
+    int scale = std::max(v->getScaleFactor(), 1);
+    m_lyricsBoxRows[v->getId()] =
+        QRect(0, boxTop / scale, v->getPaintWidth() / scale, rowHeight / scale);
 
     LyricsLayout &layout = m_lyricsLayout;
     if (!layout.valid ||

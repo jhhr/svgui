@@ -190,6 +190,14 @@ public:
     /// The region that is highlighted now; false if none is
     bool getHighlightedEvent(Event &) const;
 
+    /**
+     * Where PlotLyrics last drew its boxes in this view, in the view's
+     * own coordinates (not those of a high-resolution proxy): the row
+     * a pointer has to be in to be over a box.  Empty if the layer has
+     * not been painted in the view.
+     */
+    QRect getLyricsBoxRow(const LayerGeometryProvider *v) const;
+
     int getCompletion(LayerGeometryProvider *) const override;
 
     ScaleExtents getVerticalExtents() const override;
@@ -207,6 +215,7 @@ public:
 
 protected slots:
     void recalcSpacing();
+    void lyricsModelChanged();
 
 protected:
     double getValueForY(LayerGeometryProvider *v, int y, int avoid) const;
@@ -220,6 +229,7 @@ protected:
     bool getPointToDrag(LayerGeometryProvider *v, int x, int y, Event &) const;
 
     void paintLyrics(LayerGeometryProvider *v, QPainter &paint, QRect rect) const;
+    bool findLyricsEventAt(sv_frame_t frame, Event &found) const;
 
     ModelId m_model;
     bool m_editing;
@@ -271,6 +281,9 @@ protected:
         int maxReach = 0;                // of a label past its box
     };
     mutable LyricsLayout m_lyricsLayout;
+
+    // view id -> the row of boxes last painted there
+    mutable std::map<int, QRect> m_lyricsBoxRows;
 
     int spacingIndexToY(LayerGeometryProvider *v, int i) const;
     double yToSpacingIndex(LayerGeometryProvider *v, int y) const;
