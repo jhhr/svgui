@@ -107,6 +107,18 @@ public:
     void setRecordStartFrame(sv_frame_t frame) { m_recordStartFrame = frame; }
     sv_frame_t getRecordStartFrame() const { return m_recordStartFrame; }
 
+    /**
+     * Set how many frames of the timeline one recorded frame is: the
+     * timeline's sample rate over the rate the recording is made at.
+     * While recording, the duration recorded so far is scaled by this
+     * before it is added to the record start frame, so that a device
+     * at 48 kHz recording against a main model at 44.1 kHz moves the
+     * playback frame at the timeline's pace. The default is 1. It
+     * stays as set until set again.
+     */
+    void setRecordFrameRatio(double ratio) { m_recordFrameRatio = ratio; }
+    double getRecordFrameRatio() const { return m_recordFrameRatio; }
+
     // Only meaningful in solo mode, and used for optional alignment feature
     ModelId getPlaybackModel() const;
     void setPlaybackModel(ModelId);
@@ -369,6 +381,10 @@ protected slots:
 //!!!    void considerZoomChange(void *, int, bool);
 
 protected:
+    // The playback frame while recording: the record start frame plus
+    // the duration recorded, in the timeline's frames
+    sv_frame_t getRecordingFrame() const;
+
     AudioPlaySource *m_playSource;
     AudioRecordTarget *m_recordTarget;
     
@@ -376,6 +392,7 @@ protected:
     ZoomLevel m_globalZoom;
     mutable sv_frame_t m_playbackFrame;
     sv_frame_t m_recordStartFrame;
+    double m_recordFrameRatio;
     ModelId m_playbackModel;
     sv_samplerate_t m_mainModelSampleRate;
 
