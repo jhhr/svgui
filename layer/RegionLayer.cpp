@@ -68,6 +68,7 @@ RegionLayer::RegionLayer() :
     m_propertiesExplicitlySet(false),
     m_highlightFrame(-1),
     m_lyricsTextScale(1.0),
+    m_loggedLyricsPixelSize(0),
     m_haveHighlight(false),
     m_highlightEvent(0)
 {
@@ -1300,6 +1301,16 @@ RegionLayer::paintLyrics(LayerGeometryProvider *v, QPainter &paint, QRect rect) 
         pixelSize = std::max(1, int(std::lround(pixelSize * m_lyricsTextScale)));
     }
     plainFont.setPixelSize(pixelSize);
+
+    // What the words come to on a given screen is otherwise known only
+    // by looking: said when it changes, in the view's pixels as well
+    if (pixelSize != m_loggedLyricsPixelSize) {
+        m_loggedLyricsPixelSize = pixelSize;
+        SVCERR << "RegionLayer: lyrics drawn at " << pixelSize << " px, "
+               << pixelSize / double(std::max(v->getScaleFactor(), 1))
+               << " in the view's pixels (text scale "
+               << m_lyricsTextScale << ")" << endl;
+    }
     QFont boldFont = plainFont;
     boldFont.setBold(true);
     QFontMetrics plainMetrics(plainFont);

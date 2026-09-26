@@ -258,6 +258,7 @@ protected:
     // PlotLyrics: the frame asked for, and the region it falls in
     sv_frame_t m_highlightFrame;
     double m_lyricsTextScale;
+    mutable int m_loggedLyricsPixelSize;
     bool m_haveHighlight;
     Event m_highlightEvent;
 
