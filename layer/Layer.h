@@ -678,6 +678,19 @@ public:
     void setSavedInSession(bool saved) { m_savedInSession = saved; }
     bool isSavedInSession() const { return m_savedInSession; }
 
+    /**
+     * Say whether a view may keep what this layer draws in its cache.
+     * True by default. An application sets it false for a layer whose
+     * model changes many times a second, such as values added as they
+     * are measured: a view told of a change to the model of a layer in
+     * its cache draws every layer in the cache again, while a layer
+     * kept out of it is drawn again by itself. Layers in front of it
+     * are kept out of the cache too, as for a layer that is not
+     * scrollable (see View::getScrollableBackLayers()).
+     */
+    void setCachedInView(bool cached) { m_cachedInView = cached; }
+    bool isCachedInView() const { return m_cachedInView; }
+
 public slots:
     /**
      * Change the visibility status (dormancy) of the layer in the
@@ -787,6 +800,7 @@ protected:
 
 private:
     bool m_savedInSession = true;
+    bool m_cachedInView = true;
     mutable QMutex m_dormancyMutex;
     mutable std::map<const void *, bool> m_dormancy;
 };

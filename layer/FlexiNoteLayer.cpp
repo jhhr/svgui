@@ -1323,25 +1323,38 @@ FlexiNoteLayer::addNote(LayerGeometryProvider *v, QMouseEvent *e)
 ModelId
 FlexiNoteLayer::getAssociatedPitchModel(LayerGeometryProvider *v) const
 {
-    // Better than we used to do, but still not very satisfactory
+    // The pitch track of the audio these notes are of: the one derived
+    // from the same source model. A view may hold the pitch tracks of
+    // several recordings, and the first of them need not be ours. Notes
+    // with no source model, or none of the same, go by the first pitch
+    // track in the view: callers drop a note they can find no pitch for
 
-//    SVCERR << "FlexiNoteLayer::getAssociatedPitchModel()" << endl;
+    ModelId source;
+    if (auto notes = ModelById::getAs<NoteModel>(m_model)) {
+        source = notes->getSourceModel();
+    }
+
+    ModelId first;
 
     for (int i = 0; i < v->getView()->getLayerCount(); ++i) {
         Layer *layer = v->getView()->getLayer(i);
-        if (layer &&
-            layer->getLayerPresentationName() != "candidate") {
-//            SVCERR << "FlexiNoteLayer::getAssociatedPitchModel: looks like our layer is " << layer << endl;
-            auto modelId = layer->getModel();
-            auto model = ModelById::getAs<SparseTimeValueModel>(modelId);
-            if (model && model->getScaleUnits() == "Hz") {
-//                SVCERR << "FlexiNoteLayer::getAssociatedPitchModel: it's good, returning " << model << endl;
-                return modelId;
-            }
+        if (!layer || layer->getLayerPresentationName() == "candidate") {
+            continue;
+        }
+        auto modelId = layer->getModel();
+        auto model = ModelById::getAs<SparseTimeValueModel>(modelId);
+        if (!model || model->getScaleUnits() != "Hz") {
+            continue;
+        }
+        if (!source.isNone() && model->getSourceModel() == source) {
+            return modelId;
+        }
+        if (first.isNone()) {
+            first = modelId;
         }
     }
-//    SVCERR << "FlexiNoteLayer::getAssociatedPitchModel: failed to find a model" << endl;
-    return {};
+
+    return first;
 }
 
 void
