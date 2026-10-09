@@ -306,14 +306,76 @@ Pane::shouldIlluminateLocalFeatures(const Layer *layer, QPoint &pos) const
         return false;
     }
 
-    if (layer == getInteractionLayer() &&
+    if (!m_identifyFeatures) {
+        return false;
+    }
+
+    // The layer the description is of, so that what is lit up is what
+    // the box at top right describes
+    if (layer == getIdentifyLayer() &&
         !shouldIlluminateLocalSelection(discard, b0, b1)) {
 
         pos = m_identifyPoint;
-        return m_identifyFeatures;
+        return true;
     }
 
     return false;
+}
+
+const Layer *
+Pane::getIdentifyLayer() const
+{
+    // The layer the user picked, as for every other interaction
+    const Layer *selected = getSelectedLayer();
+    if (selected && !selected->isLayerDormant(this)) {
+        return selected;
+    }
+
+    // With a tool that acts on a layer in hand, that layer: what is lit
+    // up under the mouse is what a click there would change
+    ViewManager::ToolMode mode = ViewManager::NavigateMode;
+    if (m_manager) mode = m_manager->getToolModeFor(this);
+
+    switch (mode) {
+    case ViewManager::NoteEditMode:
+        if (Layer *notes = getTopFlexiNoteLayer()) return notes;
+        break;
+    case ViewManager::EditMode:
+    case ViewManager::DrawMode:
+    case ViewManager::EraseMode:
+        return getInteractionLayer();
+    default:
+        break;
+    }
+
+    // Layers report features through a non-const provider, though
+    // describing one changes nothing
+    LayerGeometryProvider *v = const_cast<Pane *>(this);
+    QPoint pos = m_identifyPoint;
+
+    // A note under the mouse, whichever note layer it is in: a pane may
+    // hold the notes of more than one recording, one over the other
+    for (auto i = m_layerStack.rbegin(); i != m_layerStack.rend(); ++i) {
+        auto notes = qobject_cast<const FlexiNoteLayer *>(*i);
+        if (!notes || notes->isLayerDormant(this)) continue;
+        Event note(0);
+        if (notes->getNoteAt(v, pos.x(), pos.y(), note)) {
+            return notes;
+        }
+    }
+
+    // Otherwise the topmost layer that describes anything here. A layer
+    // drawn only as a picture (a strip, a row of lyrics) describes
+    // nothing, and must not hide the layers under it
+    for (auto i = m_layerStack.rbegin(); i != m_layerStack.rend(); ++i) {
+        if ((*i)->isLayerDormant(this)) continue;
+        QPoint p = pos;
+        if ((*i)->getFeatureDescription(v, p) != "") {
+            return *i;
+        }
+    }
+
+    return nullptr;
 }
 
 bool
@@ -438,12 +500,14 @@ Pane::paintEvent(QPaintEvent *e)
     }
 
     // Feature description: the box in top-right showing values from
-    // the nearest feature to the mouse
-    
+    // the nearest feature to the mouse, in the layer that has one
+    // there -- not necessarily the top layer
+
     if (m_identifyFeatures &&
-        m_manager && m_manager->shouldIlluminateLocalFeatures() &&
-        topLayer) {
-        drawFeatureDescription(topLayer, paint);
+        m_manager && m_manager->shouldIlluminateLocalFeatures()) {
+        if (const Layer *layer = getIdentifyLayer()) {
+            drawFeatureDescription(layer, paint);
+        }
     }
     
     sv_samplerate_t sampleRate = getModelsSampleRate();
@@ -696,10 +760,10 @@ Pane::drawVerticalScale(QRect r, Layer *topLayer, QPainter &paint)
 }
             
 void
-Pane::drawFeatureDescription(Layer *topLayer, QPainter &paint)
+Pane::drawFeatureDescription(const Layer *layer, QPainter &paint)
 {
     QPoint pos = m_identifyPoint;
-    QString desc = topLayer->getFeatureDescription(this, pos);
+    QString desc = layer->getFeatureDescription(this, pos);
         
     if (desc != "") {
         
@@ -1435,7 +1499,7 @@ Pane::registerShortcuts(KeyReference &kr)
 }
 
 Layer *
-Pane::getTopFlexiNoteLayer()
+Pane::getTopFlexiNoteLayer() const
 {
     // A dormant layer is not on show, and a tool must not act on notes
     // the user cannot see

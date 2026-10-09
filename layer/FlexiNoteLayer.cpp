@@ -553,31 +553,9 @@ FlexiNoteLayer::getFeatureDescription(LayerGeometryProvider *v, QPoint &pos) con
     }
 
     Event note(0);
-    EventVector::iterator i;
+    if (!getNoteAt(v, x, pos.y(), note)) return tr("No local points");
 
     CoordinateScale scale = v->getEffectiveVerticalExtentsForLayer(this);
-    int minHeight = noteHeight(v);
-
-    for (i = points.begin(); i != points.end(); ++i) {
-
-        int y = scale.getCoordForValueRounded(v, i->getValue());
-        int h = minHeight; // GF: larger notes
-
-        if (model->getValueQuantization() != 0.0) {
-            h = y -
-                scale.getCoordForValueRounded
-                (v, i->getValue() + model->getValueQuantization());
-            if (h < minHeight) h = minHeight;
-        }
-
-        // GF: this is not quite correct
-        if (pos.y() >= y - v->scalePlotPixelSize(4) && pos.y() <= y + h) {
-            note = *i;
-            break;
-        }
-    }
-
-    if (i == points.end()) return tr("No local points");
 
     RealTime rt = RealTime::frame2RealTime(note.getFrame(),
                                            model->getSampleRate());
@@ -626,6 +604,39 @@ FlexiNoteLayer::getFeatureDescription(LayerGeometryProvider *v, QPoint &pos) con
     pos = QPoint(v->getXForFrame(note.getFrame()),
                  scale.getCoordForValueRounded(v, note.getValue()));
     return text;
+}
+
+bool
+FlexiNoteLayer::getNoteAt(LayerGeometryProvider *v, int x, int y,
+                          Event &note) const
+{
+    auto model = ModelById::getAs<NoteModel>(m_model);
+    if (!model) return false;
+
+    CoordinateScale scale = v->getEffectiveVerticalExtentsForLayer(this);
+    int minHeight = noteHeight(v);
+
+    // The box as paint() draws it: centred on the note's value, its
+    // outline running from row top to row top + h
+    for (const Event &p : getLocalPoints(v, x)) {
+
+        int py = scale.getCoordForValueRounded(v, p.getValue());
+        int h = minHeight;
+
+        if (model->getValueQuantization() != 0.0) {
+            h = py - scale.getCoordForValueRounded
+                (v, p.getValue() + model->getValueQuantization());
+            if (h < minHeight) h = minHeight;
+        }
+
+        int top = py - h/2;
+        if (y >= top && y <= top + h) {
+            note = p;
+            return true;
+        }
+    }
+
+    return false;
 }
 
 bool

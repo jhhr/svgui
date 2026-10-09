@@ -44,6 +44,13 @@ public:
 
     QString getFeatureDescription(LayerGeometryProvider *v, QPoint &) const override;
 
+    /**
+     * The note drawn at the point (x, y), if there is one: the area
+     * that names it in the feature description, which is the box
+     * paint() draws.
+     */
+    bool getNoteAt(LayerGeometryProvider *v, int x, int y, Event &note) const;
+
     bool snapToFeatureFrame(LayerGeometryProvider *v, sv_frame_t &frame,
                             int &resolution,
                             SnapType snap, int ycoord) const override;

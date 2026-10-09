@@ -51,6 +51,17 @@ public:
                                                 bool &closeToLeft,
                                                 bool &closeToRight) const override;
 
+    /**
+     * Return the layer whose feature under the mouse the pane
+     * describes (the box at top right) and illuminates. That is the
+     * layer the user has selected, or the one the current tool acts
+     * on; otherwise the topmost note layer with a note under the
+     * mouse, and failing that the topmost layer with any description
+     * to give there. Layers that are dormant in this pane are passed
+     * over: they are not on show. Null if there is no such layer.
+     */
+    const Layer *getIdentifyLayer() const;
+
     void setCentreLineVisible(bool visible);
     bool getCentreLineVisible() const { return m_centreLineVisible; }
 
@@ -171,7 +182,7 @@ protected:
                                bool &haveSomeTimeXAxis) const;
 
     void drawVerticalScale(QRect r, Layer *, QPainter &);
-    void drawFeatureDescription(Layer *, QPainter &);
+    void drawFeatureDescription(const Layer *, QPainter &);
     void drawCentreLine(sv_samplerate_t, QPainter &, bool omitLine);
     void drawModelTimeExtents(QRect, QPainter &, ModelId);
     void drawDurationAndRate(QRect, ModelId, sv_samplerate_t, QPainter &);
@@ -203,7 +214,7 @@ protected:
     void updateContextHelp(const QPoint *pos);
     void edgeScrollMaybe(int x);
 
-    Layer *getTopFlexiNoteLayer();
+    Layer *getTopFlexiNoteLayer() const;
 
     void schedulePlaybackFrameMove(sv_frame_t frame);
 
