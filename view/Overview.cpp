@@ -42,6 +42,8 @@ Overview::Overview(QWidget *w) :
     bool light = hasLightBackground();
     if (light) m_boxColour = Qt::darkGray;
     else m_boxColour = Qt::lightGray;
+
+    m_useThreadedRepaint = false;
 }
 
 void
@@ -87,14 +89,14 @@ void
 Overview::registerView(View *view)
 {
     m_views.insert(view);
-    update(); 
+    causeUpdate(); 
 }
 
 void
 Overview::unregisterView(View *view)
 {
     m_views.erase(view);
-    update();
+    causeUpdate();
 }
 
 void
@@ -107,7 +109,7 @@ Overview::globalCentreFrameChanged(sv_frame_t
 #ifdef DEBUG_OVERVIEW
     cerr << "Overview::globalCentreFrameChanged: " << f << endl;
 #endif
-    update();
+    causeUpdate();
 }
 
 void
@@ -121,7 +123,7 @@ Overview::viewCentreFrameChanged(View *v, sv_frame_t
     cerr << "Overview[" << this << "]::viewCentreFrameChanged(" << v << "): " << f << endl;
 #endif
     if (m_views.find(v) != m_views.end()) {
-        update();
+        causeUpdate();
     }
 }    
 
@@ -130,7 +132,7 @@ Overview::viewZoomLevelChanged(View *v, ZoomLevel, bool)
 {
     if (v == this) return;
     if (m_views.find(v) != m_views.end()) {
-        update();
+        causeUpdate();
     }
 }
 
@@ -148,7 +150,7 @@ Overview::viewManagerPlaybackFrameChanged(sv_frame_t f)
     if (getXForFrame(m_playPointerFrame) != getXForFrame(f)) changed = true;
     m_playPointerFrame = f;
 
-    if (changed) update();
+    if (changed) causeUpdate();
 }
 
 QColor

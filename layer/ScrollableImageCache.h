@@ -39,15 +39,10 @@ namespace sv {
 class ScrollableImageCache
 {
 public:
-    ScrollableImageCache() :
-        m_validLeft(0),
-        m_validWidth(0),
-        m_startFrame(0)
-    {}
+    ScrollableImageCache();
+    ~ScrollableImageCache();
 
-    void invalidate() {
-        m_validWidth = 0;
-    }
+    void invalidate();
     
     bool isValid() const {
         return m_validWidth > 0;
@@ -90,9 +85,11 @@ public:
 
     /**
      * Set the zoom level. If the new zoom level differs from the
-     * current one, the cache is invalidated. (Determining whether to
-     * invalidate the cache here is the only thing the zoom level is
-     * used for.)
+     * current one, the cache is invalidated. Note that determining
+     * whether to invalidate the cache is the only thing the zoom
+     * level is used for, so you should use raw unscaled zoom values
+     * (in order to reflect changes correctly) rather than values
+     * properly scaled for hi-dpi.
      */
     void setZoomLevel(ZoomLevel zoom) {
         using namespace std::rel_ops;

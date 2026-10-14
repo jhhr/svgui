@@ -18,6 +18,7 @@
 
 #include <QFrame>
 #include <QProgressBar>
+#include <QWaitCondition>
 
 #include "layer/LayerGeometryProvider.h"
 #include "layer/CoordinateScale.h"
@@ -118,10 +119,26 @@ public:
     int getXForFrame(sv_frame_t frame) const override;
 
     /**
+     * As getXForFrame, but using the given centre and zoom instead
+     * of the actual values.
+     */
+    int getXForFrameWith(sv_frame_t frame,
+                         sv_frame_t centreFrame,
+                         ZoomLevel zoomLevel) const;
+
+    /**
      * Return the closest frame to the given pixel x-coordinate.
      */
     sv_frame_t getFrameForX(int x) const override;
 
+    /**
+     * As getFrameForX, but using the given centre and zoom instead
+     * of the actual values.
+     */
+    sv_frame_t getFrameForXWith(int x,
+                                sv_frame_t centreFrame,
+                                ZoomLevel zoomLevel) const;
+    
     /**
      * Return the closest pixel x-coordinate corresponding to a given
      * view x-coordinate. Default is no scaling, ViewProxy handles
@@ -155,10 +172,17 @@ public:
 
     /**
      * Return the zoom level, i.e. the number of frames per pixel or
-     * pixels per frame
+     * pixels per frame. In View (unlike ViewProxy) this is identical
+     * to getRawZoomLevel().
      */
-    ZoomLevel getZoomLevel() const override;
+    ZoomLevel getRoundedZoomLevel() const override;
 
+    /**
+     * Return the zoom level, i.e. the number of frames per pixel or
+     * pixels per frame.
+     */
+    ZoomLevel getRawZoomLevel() const override;
+    
     /**
      * Set the zoom level, i.e. the number of frames per pixel or
      * pixels per frame.  The centre frame will be unchanged; the
@@ -404,7 +428,14 @@ public:
     sv_frame_t alignToReference(sv_frame_t) const;
     sv_frame_t getAlignedPlaybackFrame() const;
 
-    void updatePaintRect(QRect r) override { update(r); }
+    struct PlaybackFrameAligner {
+        virtual ~PlaybackFrameAligner() { }
+        virtual sv_frame_t map(const View *me, sv_frame_t frame) const = 0;
+    };
+    void setPlaybackFrameAligner(const PlaybackFrameAligner *);
+    const PlaybackFrameAligner *getPlaybackFrameAligner() const;
+    
+    void updatePaintRect(QRect r) override { causeUpdate(r); }
 
     int getScaleFactor() const override { return 1; } // See ViewProxy
     
@@ -473,8 +504,30 @@ protected:
     View(QWidget *, bool showProgress);
 
     int m_id;
+
+    void causeUpdate();
+    void causeUpdate(QRect r);
+
+    Qt::HANDLE m_constructedInThread;
+    std::atomic<bool> m_useThreadedRepaint;
+    bool m_repaintRequired;
+    QThread *m_repaintThread;
+    QWaitCondition m_repaintCondition;
+    QMutex m_repaintConditionMutex;
+    QMutex m_positionMutex;
+
+    class RepaintThread : public QThread {
+    public:
+        RepaintThread(View *v) : m_v(v) { }
+        void run() override;
+    private:
+        View *m_v;
+    };
     
     void paintEvent(QPaintEvent *e) override;
+    void paintBuffer(QRect requestedPaintArea);
+    void paintWholeBuffer();
+    void invalidateCache();
     virtual void drawSelections(QPainter &);
     virtual bool shouldLabelSelections() const { return true; }
     virtual void drawPlayPointer(QPainter &);
@@ -498,6 +551,8 @@ protected:
 
     CoordinateScale getEffectiveVerticalExtentsAndLayerFromWhich
     (QString unit, Layer **layer) const;
+
+    bool areUnitsTheSame(QString, QString) const;
     
     ZoomLevel getZoomConstraintLevel(ZoomLevel level,
                                      ZoomConstraint::RoundingDirection dir =
@@ -544,7 +599,10 @@ protected:
 
     // I own both m_cache and m_buffer
     QImage             *m_cache;
-    QImage             *m_buffer;
+    QImage             *m_buffer; // alias for one of m_bufferA and m_bufferB
+    QImage             *m_bufferA;
+    QImage             *m_bufferB;
+    QMutex              m_bufferSwapMutex;
     
     bool                m_cacheValid;
     sv_frame_t          m_cacheCentreFrame;
@@ -558,6 +616,8 @@ protected:
     bool                m_haveSelectedLayer;
 
     bool                m_useAligningProxy;
+
+    const PlaybackFrameAligner *m_playbackFrameAligner;
 
     QString             m_lastError;
 
@@ -578,6 +638,7 @@ protected:
     };
     typedef std::map<Layer *, ProgressBarRec> ProgressMap;
     ProgressMap m_progressBars; // I own the ProgressBarRecs and their contents
+    bool m_showCancelButtons;
 
     struct AlignmentProgressBarRec {
         ModelId alignedModel;

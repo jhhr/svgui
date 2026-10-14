@@ -1288,7 +1288,7 @@ RegionLayer::paintLyrics(LayerGeometryProvider *v, QPainter &paint, QRect rect) 
     // for labels that have no room in the first
     static const int rowCount = 2;
 
-    ZoomLevel zoom = v->getZoomLevel();
+    ZoomLevel zoom = v->getRoundedZoomLevel();
     double pixelsPerFrame = (zoom.zone == ZoomLevel::FramesPerPixel ?
                              1.0 / zoom.level : double(zoom.level));
 

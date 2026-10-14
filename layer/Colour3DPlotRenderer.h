@@ -123,6 +123,7 @@ public:
     };
     
     Colour3DPlotRenderer(Sources sources, Parameters parameters);
+    ~Colour3DPlotRenderer();
 
     struct RenderResult {
         /**
@@ -330,8 +331,10 @@ private:
         const;
     
     ColumnOp::Column getColumn(int sx, int minbin, int nbins,
+                               bool suppressCache,
                                std::shared_ptr<DenseThreeDimensionalModel> source) const;
     ColumnOp::Column getColumnRaw(int sx, int minbin, int nbins,
+                                  bool suppressCache,
                                   std::shared_ptr<DenseThreeDimensionalModel> source) const;
 
     void getPreferredPeakCache(const LayerGeometryProvider *,

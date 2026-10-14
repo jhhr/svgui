@@ -201,7 +201,7 @@ Pane::updateHeadsUpDisplay()
     }
 
     int count = countZoomLevels();
-    int current = getZoomLevelIndex(getZoomLevel());
+    int current = getZoomLevelIndex(m_zoomLevel);
     
     m_hthumb->setMinimumValue(1);
     m_hthumb->setMaximumValue(count);
@@ -420,7 +420,7 @@ void
 Pane::setCentreLineVisible(bool visible)
 {
     m_centreLineVisible = visible;
-    update();
+    causeUpdate();
 }
 
 void
@@ -432,8 +432,9 @@ Pane::setSelectionSnapToFeatures(bool snap)
 void
 Pane::paintEvent(QPaintEvent *e)
 {
-//    SVDEBUG << "Pane[" << getId() << "]::paintEvent" << endl;
-//    Profiler profiler("Pane::paintEvent", true);
+//    std::cerr << "Pane[" << getId() << "]::paintEvent" << std::endl;
+    
+    Profiler profiler("Pane::paintEvent", true);
 
     QPainter paint;
 
@@ -739,7 +740,7 @@ Pane::drawVerticalScale(QRect r, Layer *topLayer, QPainter &paint)
         
     if (m_scaleWidth > 0 && r.left() < m_scaleWidth) {
 
-//      Profiler profiler("Pane::paintEvent - painting vertical scale", true);
+        Profiler profiler("Pane::paintEvent - painting vertical scale", true);
 
         paint.save();
             
@@ -1328,8 +1329,8 @@ Pane::render(QPainter &paint, int xorigin, sv_frame_t f0, sv_frame_t f1)
 QImage *
 Pane::renderPartToNewImage(sv_frame_t f0, sv_frame_t f1)
 {
-    int x0 = int(round(getZoomLevel().framesToPixels(double(f0))));
-    int x1 = int(round(getZoomLevel().framesToPixels(double(f1))));
+    int x0 = int(round(m_zoomLevel.framesToPixels(double(f0))));
+    int x1 = int(round(m_zoomLevel.framesToPixels(double(f1))));
 
     QImage *image = new QImage(x1 - x0 + m_scaleWidth,
                                height(), QImage::Format_RGB32);
@@ -1458,7 +1459,10 @@ Pane::setTopLayerDisplayExtents(double dmin, double dmax)
 {
     Layer *layer = getTopLayer();
     if (!layer) return false;
-    return layer->setDisplayExtents(dmin, dmax);
+    layer->takeDiscretionaryPropertyMutex();
+    bool result = layer->setDisplayExtents(dmin, dmax);
+    layer->releaseDiscretionaryPropertyMutex();
+    return result;
 }
 
 void
@@ -1525,7 +1529,7 @@ modifierNames(Qt::KeyboardModifiers m)
     if (m & Qt::GroupSwitchModifier) s << "GroupSwitch";
     m &= (~ (Qt::ShiftModifier | Qt::ControlModifier | Qt::AltModifier |
              Qt::MetaModifier | Qt::KeypadModifier | Qt::GroupSwitchModifier));
-    if (m) s << QString(" (residue %1)").arg(int(m));
+    if (m) s << QString(" (residue %1)").arg((uint64_t)m);
     if (s.empty()) return "(none)";
     else return s.join(" | ");
 }
@@ -1650,20 +1654,20 @@ Pane::mousePressEvent(QMouseEvent *e)
             }
         }
 
-        update();
+        causeUpdate();
 
     } else if (mode == ViewManager::DrawMode) {
 
         Layer *layer = getInteractionLayer();
         if (layer && layer->isLayerEditable()) {
-            layer->drawStart(this, e);
+            invokeMouseFn(&Layer::drawStart, layer, e);
         }
 
     } else if (mode == ViewManager::EraseMode) {
 
         Layer *layer = getInteractionLayer();
         if (layer && layer->isLayerEditable()) {
-            layer->eraseStart(this, e);
+            invokeMouseFn(&Layer::eraseStart, layer, e);
         }
 
         // GF: handle mouse press for NoteEditMode 
@@ -1672,7 +1676,7 @@ Pane::mousePressEvent(QMouseEvent *e)
         std::cerr << "mouse pressed in note edit mode" << std::endl;
         Layer *layer = getTopFlexiNoteLayer();
         if (layer) {
-            layer->splitStart(this, e); 
+            invokeMouseFn(&Layer::splitStart, layer, e); 
         }
 
     } else if (mode == ViewManager::EditMode) {
@@ -1683,8 +1687,8 @@ Pane::mousePressEvent(QMouseEvent *e)
     } else if (mode == ViewManager::MeasureMode) {
 
         Layer *layer = getTopLayer();
-        if (layer) layer->measureStart(this, e);
-        update();
+        if (layer) invokeMouseFn(&Layer::measureStart, layer, e);
+        causeUpdate();
     }
 
     emit paneInteractedWith();
@@ -1777,22 +1781,22 @@ Pane::mouseReleaseEvent(QMouseEvent *e)
             }
         }
     
-        update();
+        causeUpdate();
 
     } else if (mode == ViewManager::DrawMode) {
 
         Layer *layer = getInteractionLayer();
         if (layer && layer->isLayerEditable()) {
-            layer->drawEnd(this, e);
-            update();
+            invokeMouseFn(&Layer::drawEnd, layer, e);
+            causeUpdate();
         }
 
     } else if (mode == ViewManager::EraseMode) {
 
         Layer *layer = getInteractionLayer();
         if (layer && layer->isLayerEditable()) {
-            layer->eraseEnd(this, e);
-            update();
+            invokeMouseFn(&Layer::eraseEnd, layer, e);
+            causeUpdate();
         }
 
     } else if (mode == ViewManager::NoteEditMode) {
@@ -1801,13 +1805,13 @@ Pane::mouseReleaseEvent(QMouseEvent *e)
         Layer *layer = getTopFlexiNoteLayer();
 
         if (layer) {
-            layer->splitEnd(this, e);
-            update();
+            invokeMouseFn(&Layer::splitEnd, layer, e);
+            causeUpdate();
 
             if (m_editing) {
                 if (!editSelectionEnd(e)) {
-                    layer->editEnd(this, e);
-                    update();
+                    invokeMouseFn(&Layer::editEnd, layer, e);
+                    causeUpdate();
                 }
             }
         } 
@@ -1818,8 +1822,8 @@ Pane::mouseReleaseEvent(QMouseEvent *e)
             if (!editSelectionEnd(e)) {
                 Layer *layer = getInteractionLayer();
                 if (layer && layer->isLayerEditable()) {
-                    layer->editEnd(this, e);
-                    update();
+                    invokeMouseFn(&Layer::editEnd, layer, e);
+                    causeUpdate();
                 }
             }
         } 
@@ -1827,9 +1831,9 @@ Pane::mouseReleaseEvent(QMouseEvent *e)
     } else if (mode == ViewManager::MeasureMode) {
 
         Layer *layer = getTopLayer();
-        if (layer) layer->measureEnd(this, e);
+        if (layer) invokeMouseFn(&Layer::measureEnd, layer, e);
         if (m_measureCursor1) setCursor(*m_measureCursor1);
-        update();
+        causeUpdate();
     }
 
     m_clickedInRange = false;
@@ -1880,7 +1884,7 @@ Pane::mouseMoveEvent(QMouseEvent *e)
             FlexiNoteLayer *layer = qobject_cast<FlexiNoteLayer *>(getTopFlexiNoteLayer());
             if (layer) {
                 layer->mouseMoveEvent(this, e); //!!! ew
-                update();
+                causeUpdate();
                 // return;
             }
         }   
@@ -1908,7 +1912,7 @@ Pane::mouseMoveEvent(QMouseEvent *e)
                 
                 if (m_identifyFeatures != previouslyIdentifying ||
                     m_identifyPoint != prevPoint) {
-                    update();
+                    causeUpdate();
                     updating = true;
                 }
             }
@@ -1918,7 +1922,7 @@ Pane::mouseMoveEvent(QMouseEvent *e)
                 Layer *layer = getTopLayer();
                 if (layer && layer->nearestMeasurementRectChanged
                     (this, prevPoint, m_identifyPoint)) {
-                    update();
+                    causeUpdate();
                 }
             }
         }
@@ -1931,7 +1935,7 @@ Pane::mouseMoveEvent(QMouseEvent *e)
         if (m_shiftPressed) {
 
             m_mousePos = e->pos();
-            update();
+            causeUpdate();
 
         } else {
 
@@ -1948,14 +1952,14 @@ Pane::mouseMoveEvent(QMouseEvent *e)
 
         Layer *layer = getInteractionLayer();
         if (layer && layer->isLayerEditable()) {
-            layer->drawDrag(this, e);
+            invokeMouseFn(&Layer::drawDrag, layer, e);
         }
 
     } else if (mode == ViewManager::EraseMode) {
 
         Layer *layer = getInteractionLayer();
         if (layer && layer->isLayerEditable()) {
-            layer->eraseDrag(this, e);
+            invokeMouseFn(&Layer::eraseDrag, layer, e);
         }
 
         // GF: handling NoteEditMode dragging and boundary actions for mouseMoveEvent
@@ -1986,6 +1990,7 @@ Pane::mouseMoveEvent(QMouseEvent *e)
 
                 QMouseEvent clickEvent(QEvent::MouseButtonPress,
                                        m_clickPos,
+                                       QCursor::pos(),
                                        Qt::NoButton,
                                        e->buttons(),
                                        e->modifiers());
@@ -1994,7 +1999,7 @@ Pane::mouseMoveEvent(QMouseEvent *e)
                     Layer *layer = getTopFlexiNoteLayer();
                     if (layer) {
                         std::cerr << "calling edit start" << std::endl;
-                        layer->editStart(this, &clickEvent);
+                        invokeMouseFn(&Layer::editStart, layer, &clickEvent);
                     }
                 }
             }
@@ -2014,11 +2019,12 @@ Pane::mouseMoveEvent(QMouseEvent *e)
 
                     QMouseEvent moveEvent(QEvent::MouseMove,
                                           QPoint(x, y),
+                                          QCursor::pos(),
                                           Qt::NoButton,
                                           e->buttons(),
                                           e->modifiers());
                     std::cerr << "calling editDrag" << std::endl;
-                    layer->editDrag(this, &moveEvent);
+                    invokeMouseFn(&Layer::editDrag, layer, &moveEvent);
                 }
             }
         }
@@ -2053,6 +2059,7 @@ Pane::mouseMoveEvent(QMouseEvent *e)
 
                 QMouseEvent clickEvent(QEvent::MouseButtonPress,
                                        m_clickPos,
+                                       QCursor::pos(),
                                        Qt::NoButton,
                                        e->buttons(),
                                        e->modifiers());
@@ -2060,7 +2067,7 @@ Pane::mouseMoveEvent(QMouseEvent *e)
                 if (!editSelectionStart(&clickEvent)) {
                     Layer *layer = getInteractionLayer();
                     if (layer && layer->isLayerEditable()) {
-                        layer->editStart(this, &clickEvent);
+                        invokeMouseFn(&Layer::editStart, layer, &clickEvent);
                     }
                 }
             }
@@ -2080,11 +2087,12 @@ Pane::mouseMoveEvent(QMouseEvent *e)
 
                     QMouseEvent moveEvent(QEvent::MouseMove,
                                           QPoint(x, y),
+                                          QCursor::pos(),
                                           Qt::NoButton,
                                           e->buttons(),
                                           e->modifiers());
                                               
-                    layer->editDrag(this, &moveEvent);
+                    invokeMouseFn(&Layer::editDrag, layer, &moveEvent);
                 }
             }
         }
@@ -2095,11 +2103,11 @@ Pane::mouseMoveEvent(QMouseEvent *e)
 
         Layer *layer = getTopLayer();
         if (layer) {
-            layer->measureDrag(this, e);
+            invokeMouseFn(&Layer::measureDrag, layer, e);
             if (layer->hasTimeXAxis()) edgeScrollMaybe(e->position().x());
         }
 
-        update();
+        causeUpdate();
     }
     
     if (m_dragMode != UnresolvedDrag) {
@@ -2171,7 +2179,9 @@ Pane::zoomToRegion(QRect r)
         }
         SVCERR << "finally: rmin: " << rmin << ", rmax: " << rmax << endl;
 
+        layer->takeDiscretionaryPropertyMutex();
         layer->setDisplayExtents(rmin, rmax);
+        layer->releaseDiscretionaryPropertyMutex();
         updateVerticalPanner();
     }
 }
@@ -2408,7 +2418,7 @@ Pane::dragExtendSelection(QMouseEvent *e)
         }
     }
 
-    update();
+    causeUpdate();
 
     if (min != max) {
         m_playbackFrameMoveScheduled = false;
@@ -2439,7 +2449,7 @@ Pane::edgeScrollMaybe(int x)
         }
         if (move != 0) {
             setCentreFrame(m_centreFrame + move);
-            update();
+            causeUpdate();
         }
     }
 }
@@ -2489,8 +2499,8 @@ Pane::mouseDoubleClickEvent(QMouseEvent *e)
     } else if (mode == ViewManager::MeasureMode) {
 
         Layer *layer = getTopLayer();
-        if (layer) layer->measureDoubleClick(this, e);
-        update();
+        if (layer) invokeMouseFn(&Layer::measureDoubleClick, layer, e);
+        causeUpdate();
     }
 
     if (relocate) {
@@ -2513,7 +2523,7 @@ Pane::mouseDoubleClickEvent(QMouseEvent *e)
         std::cerr << "double click in note edit mode" << std::endl;
         Layer *layer = getInteractionLayer();
         if (layer && layer->isLayerEditable()) {
-            layer->addNote(this, e); 
+            invokeMouseFn(&Layer::addNote, layer, e); 
         }
     }
 
@@ -2536,7 +2546,7 @@ Pane::leaveEvent(QEvent *)
     m_mouseInWidget = false;
     bool previouslyIdentifying = m_identifyFeatures;
     m_identifyFeatures = false;
-    if (previouslyIdentifying) update();
+    if (previouslyIdentifying) causeUpdate();
     emit contextHelpChanged("");
 }
 
@@ -2549,14 +2559,14 @@ Pane::resizeEvent(QResizeEvent *)
 void
 Pane::wheelEvent(QWheelEvent *e)
 {
-/*
-  SVDEBUG << "Pane[" << getId() << "]::wheelEvent: pixelDelta = ("
+    /*
+    SVDEBUG << "Pane[" << getId() << "]::wheelEvent: pixelDelta = ("
             << e->pixelDelta().x() << "," << e->pixelDelta().y()
             << "), angleDelta = (" << e->angleDelta().x()
-            << "," << e->angleDelta().y() << "), pixelDelta = ("
-            << e->pixelDelta().x() << "," << e->pixelDelta().y()
-            << "), modifiers = " << modifierNames(e->modifiers()) << endl;
-*/
+            << "," << e->angleDelta().y() << "), modifiers = "
+            << modifierNames(e->modifiers()) << endl;
+    */
+
     e->accept(); // we never want wheel events on the pane to be propagated
     
     int dx = e->angleDelta().x();
@@ -2571,7 +2581,7 @@ Pane::wheelEvent(QWheelEvent *e)
 
     if (e->modifiers() & Qt::ControlModifier) {
         // treat a vertical wheel as horizontal
-        SVDEBUG << "Ctrl held, treating as horizontal" << endl;
+//        SVDEBUG << "Ctrl held, treating as horizontal" << endl;
         if (abs(dx) > abs(dy)) {
             d = dx; // ok, it was horizontal already
         }
@@ -2580,21 +2590,23 @@ Pane::wheelEvent(QWheelEvent *e)
         // treat a horizontal wheel as vertical - this is because Qt
         // intercepts the event when Alt is pressed and pretends
         // vertical is horizontal, so we're just undoing that
-        SVDEBUG << "Alt held, treating as vertical" << endl;
+//        SVDEBUG << "Alt held, treating as vertical" << endl;
         if (abs(dx) > abs(dy)) {
             d = dx; // it was coerced to horizontal, so get the right delta
         }
         horizontal = false;
     } else if (abs(dx) > abs(dy)) {
-        SVDEBUG << "Direction is primarily horizontal" << endl;
+//        SVDEBUG << "Direction is primarily horizontal" << endl;
         d = dx;
         horizontal = true;
     }        
 
-    if (e->phase() == Qt::ScrollBegin ||
-        std::abs(d) >= 120 ||
-        (d > 0 && m_pendingWheelAngle < 0) ||
-        (d < 0 && m_pendingWheelAngle > 0)) {
+    if (e->phase() == Qt::ScrollBegin) {
+        if (d < 0) m_pendingWheelAngle = -120;
+        else if (d > 0) m_pendingWheelAngle = 120;
+    } else if (std::abs(d) >= 120 ||
+               (d > 0 && m_pendingWheelAngle < 0) ||
+               (d < 0 && m_pendingWheelAngle > 0)) {
         m_pendingWheelAngle = d;
     } else {
         m_pendingWheelAngle += d;
@@ -2680,9 +2692,7 @@ Pane::wheelVertical(int sign, Qt::KeyboardModifiers mods)
                                                   ZoomConstraint::RoundUp);
         }
     
-        if (newZoomLevel != m_zoomLevel) {
-            setZoomLevel(newZoomLevel);
-        }
+        setZoomLevel(newZoomLevel);
     }
 
     emit paneInteractedWith();
@@ -2701,20 +2711,19 @@ Pane::wheelHorizontalFine(int pixels, Qt::KeyboardModifiers)
 {
     // Scroll left or right by a fixed number of pixels
 
-    if (getStartFrame() < 0 && 
-        getEndFrame() >= getModelsEndFrame()) {
-        return;
-    }
-
     int delta = int(round(m_zoomLevel.pixelsToFrames(pixels)));
 
+    sv_frame_t target = m_centreFrame;
+    
     if (m_centreFrame < delta) {
-        setCentreFrame(0);
+        target = 0;
     } else if (m_centreFrame - delta >= getModelsEndFrame()) {
-        setCentreFrame(getModelsEndFrame());
+        target = getModelsEndFrame();
     } else {
-        setCentreFrame(m_centreFrame - delta);
+        target = m_centreFrame - delta;
     }
+
+    setCentreFrame(target);
 
     emit paneInteractedWith();
 }
@@ -2741,7 +2750,9 @@ Pane::verticalThumbwheelMoved(int value)
         if (value > max) {
             value = max;
         }
+        layer->takeDiscretionaryPropertyMutex();
         layer->setVerticalZoomStep(value);
+        layer->releaseDiscretionaryPropertyMutex();
         updateVerticalPanner();
     }
 }    
@@ -2900,7 +2911,7 @@ Pane::editSelectionDrag(QMouseEvent *e)
 {
     if (m_editingSelection.isEmpty()) return false;
     m_mousePos = e->pos();
-    update();
+    causeUpdate();
     return true;
 }
 
@@ -3014,7 +3025,7 @@ void
 Pane::zoomWheelsEnabledChanged()
 {
     updateHeadsUpDisplay();
-    update();
+    causeUpdate();
 }
 
 void

@@ -91,6 +91,10 @@ SpectrogramLayer::SpectrogramLayer(Configuration config) :
     m_exiting(false),
     m_peakCacheDivisor(8)
 {
+#ifdef DEBUG_SPECTROGRAM
+    SVDEBUG << "SpectrogramLayer[" << this << "]::SpectrogramLayer()" << endl;
+#endif
+    
     QString colourConfigName = "spectrogram-colour";
     int colourConfigDefault = int(ColourMapper::Green);
     
@@ -139,6 +143,9 @@ SpectrogramLayer::SpectrogramLayer(Configuration config) :
 
 SpectrogramLayer::~SpectrogramLayer()
 {
+#ifdef DEBUG_SPECTROGRAM
+    SVDEBUG << "SpectrogramLayer[" << this << "]::~SpectrogramLayer()" << endl;
+#endif
     invalidateRenderers();
     deleteDerivedModels();
 }
@@ -278,12 +285,11 @@ SpectrogramLayer::setModel(ModelId modelId)
 
         connectSignals(m_model);
 
-        connect(newModel.get(),
-                SIGNAL(modelChanged(ModelId)),
-                this, SLOT(cacheInvalid(ModelId)));
-        connect(newModel.get(),
-                SIGNAL(modelChangedWithin(ModelId, sv_frame_t, sv_frame_t)),
-                this, SLOT(cacheInvalid(ModelId, sv_frame_t, sv_frame_t)));
+        connect(newModel.get(), &Model::modelChanged,
+                this, &SpectrogramLayer::modelChanged);
+
+        connect(newModel.get(), &Model::modelChangedWithin,
+                this, &SpectrogramLayer::modelChangedWithin);
     }
     
     emit modelReplaced();
@@ -791,6 +797,11 @@ SpectrogramLayer::preferenceChanged(PropertyContainer::PropertyName name)
         setWindowType(Preferences::getInstance()->getWindowType());
         return;
     }
+    if (name == "Spectrogram Smoothing") {
+        setSmooth(Preferences::getInstance()->getSpectrogramSmoothing() ==
+                  Preferences::SpectrogramInterpolated);
+        return;
+    }
     if (name == "Tuning Frequency") {
         emit layerParametersChanged();
     }
@@ -1177,7 +1188,9 @@ SpectrogramLayer::setLayerDormant(const LayerGeometryProvider *v, bool dormant)
 
         Layer::setLayerDormant(v, true);
 
+        takeDiscretionaryPropertyMutex();
         invalidateRenderers();
+        releaseDiscretionaryPropertyMutex();
         
     } else {
 
@@ -1192,6 +1205,31 @@ SpectrogramLayer::isLayerScrollable(const LayerGeometryProvider *) const
     // guaranteeing to get an invisible seam if someone else scrolls
     // us and we just fill in
     return false;
+}
+
+void
+SpectrogramLayer::modelChanged(ModelId model)
+{
+#ifdef DEBUG_SPECTROGRAM_REPAINT
+    SVDEBUG << "SpectrogramLayer::modelChanged()" << endl;
+#endif
+
+    takeDiscretionaryPropertyMutex();
+    cacheInvalid(model);
+    releaseDiscretionaryPropertyMutex();
+}
+
+void
+SpectrogramLayer::modelChangedWithin(ModelId model,
+                                     sv_frame_t from, sv_frame_t to)
+{
+#ifdef DEBUG_SPECTROGRAM_REPAINT
+    SVDEBUG << "SpectrogramLayer::modelChangedWithin()" << endl;
+#endif
+
+    takeDiscretionaryPropertyMutex();
+    cacheInvalid(model, from, to);
+    releaseDiscretionaryPropertyMutex();
 }
 
 void
@@ -1732,6 +1770,10 @@ SpectrogramLayer::paintWithRenderer(LayerGeometryProvider *v, QPainter &paint, Q
         
         QRect uncached = renderer->getLargestUncachedRect(v);
         if (uncached.width() > 0) {
+#ifdef DEBUG_SPECTROGRAM_REPAINT
+            SVDEBUG << "have uncached rect of width " << uncached.width()
+                    << endl;
+#endif
             v->updatePaintRect(uncached);
         }
     }
@@ -1766,7 +1808,7 @@ SpectrogramLayer::paint(LayerGeometryProvider *v, QPainter &paint, QRect rect) c
     Profiler profiler("SpectrogramLayer::paint", false);
 
 #ifdef DEBUG_SPECTROGRAM_REPAINT
-    SVDEBUG << "SpectrogramLayer::paint() entering: m_model is " << m_model << ", zoom level is " << v->getZoomLevel() << endl;
+    SVDEBUG << "SpectrogramLayer::paint() entering in thread " << (size_t)QThread::currentThreadId() << ": m_model is " << m_model << ", zoom level is " << v->getRawZoomLevel() << endl;
     
     SVDEBUG << "SpectrogramLayer::paint(): rect is " << rect.x() << "," << rect.y() << " " << rect.width() << "x" << rect.height() << endl;
 #endif
@@ -1779,6 +1821,10 @@ SpectrogramLayer::paint(LayerGeometryProvider *v, QPainter &paint, QRect rect) c
     paintWithRenderer(v, paint, rect);
 
     illuminateLocalFeatures(v, paint);
+
+#ifdef DEBUG_SPECTROGRAM_REPAINT
+    SVDEBUG << "SpectrogramLayer::paint() returning in thread " << (size_t)QThread::currentThreadId() << endl;
+#endif
 }
 
 void
